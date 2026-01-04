@@ -149,10 +149,68 @@ describe('handleBinaryRedirect - DEB', () => {
     vi.unstubAllGlobals();
   });
 
-  it('returns 302 redirect for existing DEB asset', async () => {
-    const env = createMockEnv({ GITHUB_TOKEN: 'test-token' });
+  /**
+   * Mock helper that simulates public repo (HEAD returns 200)
+   */
+  function mockPublicRepo(releases: ReturnType<typeof createMockGitHubRelease>[]) {
+    vi.mocked(fetch).mockImplementation(async (url, options) => {
+      const urlStr = url.toString();
+
+      if (urlStr.includes('api.github.com') && urlStr.includes('/releases')) {
+        return new Response(JSON.stringify(releases), {
+          status: 200,
+          headers: new Headers({ link: '' }),
+        });
+      }
+
+      // HEAD request to check public accessibility - return 200 for public
+      if (options?.method === 'HEAD') {
+        return new Response(null, { status: 200 });
+      }
+
+      return new Response('Not found', { status: 404 });
+    });
+  }
+
+  /**
+   * Mock helper that simulates private repo (HEAD returns 401, GET with auth works)
+   */
+  function mockPrivateRepo(releases: ReturnType<typeof createMockGitHubRelease>[], expectedUrl: string) {
+    vi.mocked(fetch).mockImplementation(async (url, options) => {
+      const urlStr = url.toString();
+
+      if (urlStr.includes('api.github.com') && urlStr.includes('/releases')) {
+        return new Response(JSON.stringify(releases), {
+          status: 200,
+          headers: new Headers({ link: '' }),
+        });
+      }
+
+      // HEAD request to check public accessibility - return 401 for private
+      if (options?.method === 'HEAD') {
+        return new Response(null, { status: 401 });
+      }
+
+      // GET with auth - return content
+      if (urlStr === expectedUrl) {
+        const headers = options?.headers as Record<string, string> | undefined;
+        if (headers?.Authorization) {
+          return new Response('fake-deb-content', {
+            status: 200,
+            headers: { 'Content-Type': 'application/octet-stream' },
+          });
+        }
+        return new Response('Unauthorized', { status: 401 });
+      }
+
+      return new Response('Not found', { status: 404 });
+    });
+  }
+
+  it('returns 302 redirect for public repo (auto-detected)', async () => {
+    const env = createMockEnv({ GITHUB_TOKEN: 'test-token' }); // Token set but repo is public
     const ctx = createMockExecutionContext();
-    mockGitHubReleasesAPI([MOCK_RELEASE_WITH_DEB]);
+    mockPublicRepo([MOCK_RELEASE_WITH_DEB]);
 
     const request = new Request('https://example.com/owner/repo/pool/main/t/test-app/test-app_1.0.0_amd64.deb');
     const response = await fetchAndFlush(request, env, ctx);
@@ -161,10 +219,52 @@ describe('handleBinaryRedirect - DEB', () => {
     expect(response.headers.get('Location')).toBe(MOCK_DEB_ASSET.browser_download_url);
   });
 
-  it('returns 404 for non-existent DEB asset', async () => {
+  it('proxies download for private repo (auto-detected)', async () => {
     const env = createMockEnv({ GITHUB_TOKEN: 'test-token' });
     const ctx = createMockExecutionContext();
-    mockGitHubReleasesAPI([MOCK_RELEASE_WITH_DEB]);
+    mockPrivateRepo([MOCK_RELEASE_WITH_DEB], MOCK_DEB_ASSET.browser_download_url);
+
+    const request = new Request('https://example.com/owner/repo/pool/main/t/test-app/test-app_1.0.0_amd64.deb');
+    const response = await fetchAndFlush(request, env, ctx);
+
+    // Should proxy (200) not redirect (302) for private repos
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Content-Type')).toBe('application/octet-stream');
+  });
+
+  it('returns 401 for private repo without token', async () => {
+    const env = createMockEnv({ GITHUB_TOKEN: '' }); // No token
+    const ctx = createMockExecutionContext();
+
+    // Mock private repo behavior
+    vi.mocked(fetch).mockImplementation(async (url, options) => {
+      const urlStr = url.toString();
+
+      if (urlStr.includes('api.github.com') && urlStr.includes('/releases')) {
+        return new Response(JSON.stringify([MOCK_RELEASE_WITH_DEB]), {
+          status: 200,
+          headers: new Headers({ link: '' }),
+        });
+      }
+
+      // HEAD request returns 401 (private)
+      if (options?.method === 'HEAD') {
+        return new Response(null, { status: 401 });
+      }
+
+      return new Response('Not found', { status: 404 });
+    });
+
+    const request = new Request('https://example.com/owner/repo/pool/main/t/test-app/test-app_1.0.0_amd64.deb');
+    const response = await fetchAndFlush(request, env, ctx);
+
+    expect(response.status).toBe(401);
+  });
+
+  it('returns 404 for non-existent DEB asset', async () => {
+    const env = createMockEnv({ GITHUB_TOKEN: '' });
+    const ctx = createMockExecutionContext();
+    mockPublicRepo([MOCK_RELEASE_WITH_DEB]);
 
     const request = new Request('https://example.com/owner/repo/pool/main/n/nonexistent/nonexistent_1.0.0_amd64.deb');
     const response = await fetchAndFlush(request, env, ctx);
@@ -175,9 +275,9 @@ describe('handleBinaryRedirect - DEB', () => {
   });
 
   it('returns 404 when no releases exist', async () => {
-    const env = createMockEnv({ GITHUB_TOKEN: 'test-token' });
+    const env = createMockEnv({ GITHUB_TOKEN: '' });
     const ctx = createMockExecutionContext();
-    mockGitHubReleasesAPI([]);
+    mockPublicRepo([]);
 
     const request = new Request('https://example.com/owner/repo/pool/main/t/test-app/test-app_1.0.0_amd64.deb');
     const response = await fetchAndFlush(request, env, ctx);
@@ -186,7 +286,7 @@ describe('handleBinaryRedirect - DEB', () => {
   });
 
   it('finds asset across multiple releases', async () => {
-    const env = createMockEnv({ GITHUB_TOKEN: 'test-token' });
+    const env = createMockEnv({ GITHUB_TOKEN: '' });
     const ctx = createMockExecutionContext();
 
     const oldAsset = createMockGitHubAsset({
@@ -203,7 +303,7 @@ describe('handleBinaryRedirect - DEB', () => {
       }),
     ];
 
-    mockGitHubReleasesAPI(releases);
+    mockPublicRepo(releases);
 
     // Request the asset from the older release
     const request = new Request('https://example.com/owner/repo/pool/main/o/old-app/old-app_0.9.0_amd64.deb');
@@ -214,7 +314,7 @@ describe('handleBinaryRedirect - DEB', () => {
   });
 
   it('respects prerelease variant', async () => {
-    const env = createMockEnv({ GITHUB_TOKEN: 'test-token' });
+    const env = createMockEnv({ GITHUB_TOKEN: '' });
     const ctx = createMockExecutionContext();
 
     const prereleaseAsset = createMockGitHubAsset({
@@ -229,7 +329,7 @@ describe('handleBinaryRedirect - DEB', () => {
       assets: [prereleaseAsset],
     });
 
-    mockGitHubReleasesAPI([prereleaseRelease]);
+    mockPublicRepo([prereleaseRelease]);
 
     const request = new Request('https://example.com/owner/repo/prerelease/pool/main/b/beta-app/beta-app_2.0.0-beta.1_amd64.deb');
     const response = await fetchAndFlush(request, env, ctx);
