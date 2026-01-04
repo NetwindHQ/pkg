@@ -2,7 +2,7 @@
  * RPM Repository Metadata Generator
  *
  * Generates repomd.xml, primary.xml, filelists.xml, and other.xml for RPM/YUM/DNF repositories.
- * Compatible with COPR-style repository structure.
+ * Compatible with standard YUM/DNF repository structure.
  *
  * Structure:
  * /{owner}/{repo}/repodata/repomd.xml       - Repository metadata index

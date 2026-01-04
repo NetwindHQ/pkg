@@ -209,12 +209,12 @@ async function main() {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Reprox - A Serverless Github Releases APT/RPM Gateway</title>
-  <meta name="description" content="Turn Github Releases into an APT or COPR repository">
-  <meta name="keywords" content="linux, software, reprox, github, releases, apt, copr, repository">
+  <meta name="description" content="Turn Github Releases into an APT or RPM repository">
+  <meta name="keywords" content="linux, software, reprox, github, releases, apt, rpm, repository">
   <meta property="og:url" content="{{BASE_URL}}">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Reprox - A Serverless Github Releases APT/RPM Gateway">
-  <meta property="og:description" content="Turn Github Releases into an APT or COPR repository">
+  <meta property="og:description" content="Turn Github Releases into an APT or RPM repository">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <style>${optimizedGithubCss}</style>
   <style media="(prefers-color-scheme: light)">${optimizedLightCss}</style>

@@ -1,7 +1,7 @@
 # 📦 Reprox — A Serverless Github Releases APT/RPM Gateway
 https://github.com/leoherzog/reprox
 
-There are many great Linux softwares that distribute .deb and/or .rpm packages via Github Releases only. Reprox turns any GitHub repository that uses Releases into a fully compliant APT (deb) or COPR (rpm) repository. Package downloads redirect straight to GitHub's CDN, moving the trust model from the maintainer of an APT/COPR repository to the maintainer of the GitHub repository.
+There are many great Linux softwares that distribute .deb and/or .rpm packages via Github Releases only. Reprox turns any GitHub repository that uses Releases into a fully compliant APT (deb) or RPM repository. Package downloads redirect straight to GitHub's CDN, moving the trust model from the maintainer of an APT/RPM repository to the maintainer of the GitHub repository.
 
 I made this for my own personal use, so I didn't have to "Watch" for new Github Releases and manually download/install updates. I recognize that I am man-in-the-middling the traditional trust model for package repositories. Be careful to add only trusted, official upstream Github repositories. If you're worried about me man-in-the-middleing you, skip ahead to [the Self-Hosting section](#self-hosting).
 
