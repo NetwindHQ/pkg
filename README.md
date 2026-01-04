@@ -5,7 +5,7 @@ There are many great Linux softwares that distribute .deb and/or .rpm packages v
 
 I made this for my own personal use, so I didn't have to "Watch" for new Github Releases and manually download/install updates. I recognize that I am man-in-the-middling the traditional trust model for package repositories. Be careful to add only trusted, official upstream Github repositories. If you're worried about me man-in-the-middleing you, skip ahead to [the Self-Hosting section](#self-hosting).
 
-Supports all Releases since [June 2025](https://github.blog/changelog/2025-06-03-releases-now-expose-digests-for-release-assets/). Older releases will not appear in the package repository.
+Supports all Releases since [June 2025](https://github.blog/changelog/2025-06-03-releases-now-expose-digests-for-release-assets/).
 
 ## Usage
 
@@ -32,6 +32,8 @@ Suites: stable
 Components: main
 Signed-By: /etc/apt/keyrings/{repo}.gpg
 EOF
+# To include Releases marked as Pre-Release, change the URL to
+# https://reprox.dev/{owner}/{repo}/prerelease
 
 # Install
 sudo apt update && sudo apt install {package}
@@ -54,6 +56,8 @@ curl -fsSL https://reprox.dev/{owner}/{repo}/public.key | \
 
 echo "deb [signed-by=/etc/apt/keyrings/{repo}.gpg] https://reprox.dev/{owner}/{repo} stable main" | \
   sudo tee /etc/apt/sources.list.d/{repo}.list
+# To include Releases marked as Pre-Release, change the URL to
+# https://reprox.dev/{owner}/{repo}/prerelease
 
 # Install
 sudo apt update && sudo apt install {package}
@@ -73,6 +77,8 @@ gpgcheck=0
 repo_gpgcheck=1
 gpgkey=https://reprox.dev/{owner}/{repo}/public.key
 EOF
+# To include Releases marked as Pre-Release, change the URL to
+# https://reprox.dev/{owner}/{repo}/prerelease
 
 sudo dnf install {package}
 # Optional: verify the key fingerprint on first update/install
