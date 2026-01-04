@@ -39,7 +39,6 @@ function createPackageEntry(overrides: Partial<PackageEntry> = {}): PackageEntry
     filename: 'pool/main/t/test-pkg/test-pkg_1.0.0_amd64.deb',
     size: 50000,
     sha256: '',
-    md5sum: '',
     ...overrides,
   };
 }
@@ -72,23 +71,19 @@ describe('generatePackageEntry', () => {
   it('includes checksums when provided', () => {
     const entry = createPackageEntry({
       sha256: 'abc123def456',
-      md5sum: '789xyz',
     });
     const output = generatePackageEntry(entry);
 
     expect(output).toContain('SHA256: abc123def456');
-    expect(output).toContain('MD5sum: 789xyz');
   });
 
   it('omits checksums when empty', () => {
     const entry = createPackageEntry({
       sha256: '',
-      md5sum: '',
     });
     const output = generatePackageEntry(entry);
 
     expect(output).not.toContain('SHA256:');
-    expect(output).not.toContain('MD5sum:');
   });
 
   it('includes optional control fields when present', () => {

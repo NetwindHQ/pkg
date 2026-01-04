@@ -1,6 +1,6 @@
 import type { DebianControlData, PackageEntry, AssetLike } from '../types';
 import { parseDebBufferAsync } from '../parsers/deb';
-import { extractArchFromFilename } from '../github/api';
+import { extractArchFromFilename } from '../utils/architectures';
 
 /**
  * Range request size for .deb header parsing
@@ -13,7 +13,7 @@ const RANGE_SIZE = 65536;
  */
 export function generatePackageEntry(entry: PackageEntry): string {
   const lines: string[] = [];
-  const { controlData, filename, size, sha256, md5sum } = entry;
+  const { controlData, filename, size, sha256 } = entry;
 
   // Required fields
   lines.push(`Package: ${controlData.package}`);
@@ -71,10 +71,6 @@ export function generatePackageEntry(entry: PackageEntry): string {
 
   if (sha256) {
     lines.push(`SHA256: ${sha256}`);
-  }
-
-  if (md5sum) {
-    lines.push(`MD5sum: ${md5sum}`);
   }
 
   // Description (can be multi-line)
@@ -145,6 +141,14 @@ export async function buildPackageEntry(
   // Fetch metadata from .deb header
   const controlData = await fetchDebMetadata(asset.browser_download_url, githubToken);
 
+  // Validate required fields
+  if (!controlData.package || controlData.package.length === 0) {
+    throw new Error(`Invalid .deb: missing Package field in ${asset.name}`);
+  }
+  if (!controlData.version || controlData.version.length === 0) {
+    throw new Error(`Invalid .deb: missing Version field in ${asset.name}`);
+  }
+
   // Override architecture from filename if control says "all" but filename is specific
   if (controlData.architecture === 'all') {
     const filenameArch = extractArchFromFilename(asset.name);
@@ -169,7 +173,6 @@ export async function buildPackageEntry(
     filename,
     size: asset.size,
     sha256,
-    md5sum: '',
   };
 }
 

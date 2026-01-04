@@ -14,7 +14,8 @@
 
 import type { RpmPackageEntry, RpmHeaderData, AssetLike } from '../types';
 import { sha256, gzipCompress } from '../utils/crypto';
-import { extractRpmMetadata, extractRpmArchFromFilename } from '../parsers/rpm';
+import { extractRpmMetadata } from '../parsers/rpm';
+import { extractRpmArchFromFilename } from '../utils/architectures';
 import { escapeXml } from '../utils/xml';
 
 /**

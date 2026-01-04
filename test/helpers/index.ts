@@ -151,7 +151,6 @@ export function createPackageEntry(overrides: Partial<PackageEntry> = {}): Packa
     filename: 'pool/main/t/test-pkg/test-pkg_1.0.0_amd64.deb',
     size: 50000,
     sha256: '',
-    md5sum: '',
     ...overrides,
   };
 }

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { GitHubClient, extractArchFromFilename, getArchitecturesFromAssets } from '../src/github/api';
+import { GitHubClient, getArchitecturesFromAssets } from '../src/github/api';
+import { extractArchFromFilename } from '../src/utils/architectures';
 
 // ============================================================================
 // extractArchFromFilename Tests
@@ -111,16 +112,19 @@ describe('getArchitecturesFromAssets', () => {
 
     expect(archs).toContain('amd64');
     expect(archs).toContain('arm64');
-    expect(archs).toContain('all'); // Always included
+    // 'all' is only included if there are actual arch-independent packages
+    expect(archs).not.toContain('all');
   });
 
-  it('always includes all architecture', () => {
+  it('includes all architecture only when all packages exist', () => {
     const assets = [
       { name: 'package_1.0.0_amd64.deb' },
+      { name: 'package_1.0.0_all.deb' }, // arch-independent package
     ];
 
     const archs = getArchitecturesFromAssets(assets);
 
+    expect(archs).toContain('amd64');
     expect(archs).toContain('all');
   });
 
@@ -142,6 +146,7 @@ describe('getArchitecturesFromAssets', () => {
       { name: 'package_1.0.0_arm64.deb' },
       { name: 'package_1.0.0_amd64.deb' },
       { name: 'package_1.0.0_i386.deb' },
+      { name: 'package_1.0.0_all.deb' }, // arch-independent
     ];
 
     const archs = getArchitecturesFromAssets(assets);
@@ -153,7 +158,8 @@ describe('getArchitecturesFromAssets', () => {
   it('handles empty asset list', () => {
     const archs = getArchitecturesFromAssets([]);
 
-    expect(archs).toEqual(['all']);
+    // No assets means no architectures
+    expect(archs).toEqual([]);
   });
 
   it('handles assets with no deb files', () => {
@@ -165,7 +171,8 @@ describe('getArchitecturesFromAssets', () => {
 
     const archs = getArchitecturesFromAssets(assets);
 
-    expect(archs).toEqual(['all']);
+    // No deb files means no architectures
+    expect(archs).toEqual([]);
   });
 });
 
@@ -196,7 +203,6 @@ describe('GitHubClient', () => {
           name: `package_${id}.0.0_amd64.deb`,
           size: 1000,
           browser_download_url: `https://github.com/owner/repo/releases/download/v${id}.0.0/package_${id}.0.0_amd64.deb`,
-          content_type: 'application/vnd.debian.binary-package',
         },
       ],
     });

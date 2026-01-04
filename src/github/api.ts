@@ -1,9 +1,6 @@
 import type { GitHubRelease, GitHubAsset } from '../types';
 import { extractArchFromFilename } from '../utils/architectures';
 
-// Re-export for backward compatibility
-export { extractArchFromFilename };
-
 const GITHUB_API_BASE = 'https://api.github.com';
 
 // Maximum pages to fetch to prevent infinite loops (50 pages * 100 = 5000 releases max)
@@ -64,10 +61,15 @@ export class GitHubClient {
       const pageReleases: GitHubRelease[] = await response.json();
       if (pageReleases.length === 0) break;
 
-      // Filter prereleases unless includePrerelease is true
-      const filtered = includePrerelease
-        ? pageReleases
-        : pageReleases.filter(r => !r.prerelease);
+      // Filter:
+      // 1. Draft releases (published_at is null) - always excluded
+      // 2. Prereleases (unless includePrerelease is true)
+      const filtered = pageReleases.filter(r => {
+        // Always exclude drafts (identified by null published_at)
+        if (r.published_at === null) return false;
+        // Filter prereleases based on flag
+        return includePrerelease || !r.prerelease;
+      });
 
       releases.push(...filtered);
 
@@ -92,8 +94,8 @@ export function getArchitecturesFromAssets<T extends { name: string }>(assets: T
     }
   }
 
-  // Always include 'all' for arch-independent packages
-  archs.add('all');
+  // Note: 'all' architecture is added organically when arch-independent
+  // packages are found (extractArchFromFilename returns 'all' for them)
 
   return Array.from(archs).sort();
 }

@@ -13,14 +13,35 @@
  */
 
 import type { GitHubRelease } from '../types';
+import { sha256 } from '../utils/crypto';
 
 export type ReleaseVariant = 'stable' | 'prerelease';
 
 /**
- * Compute a simple hash of release IDs for cache invalidation
+ * Compute a hash of releases AND their asset digests for cache invalidation.
+ * This ensures cache invalidates when:
+ * - New releases are created
+ * - Releases are deleted
+ * - Assets are added/removed/re-uploaded (digest changes)
+ *
+ * Returns a 16-character hex string (first 16 chars of SHA256).
  */
-export function computeReleaseIdsHash(releases: GitHubRelease[]): string {
-  return releases.map(r => r.id).sort((a, b) => a - b).join(',');
+export async function computeReleaseIdsHash(releases: GitHubRelease[]): Promise<string> {
+  // Build a deterministic string from releases and asset digests
+  const sortedReleases = [...releases].sort((a, b) => a.id - b.id);
+
+  const hashInput = sortedReleases.map(r => {
+    // Sort assets by name for determinism
+    const sortedAssets = [...r.assets].sort((a, b) => a.name.localeCompare(b.name));
+    const assetDigests = sortedAssets
+      .map(a => `${a.name}:${a.digest || a.size}`)
+      .join('|');
+    return `${r.id}:${assetDigests}`;
+  }).join('\n');
+
+  // Return first 16 chars of SHA256 for reasonable key length
+  const fullHash = await sha256(hashInput);
+  return fullHash.slice(0, 16);
 }
 
 // Base URL for synthetic cache requests

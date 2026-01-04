@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { parseRpmBuffer, extractRpmArchFromFilename } from '../../src/parsers/rpm';
+import { parseRpmBuffer } from '../../src/parsers/rpm';
+import { extractRpmArchFromFilename } from '../../src/utils/architectures';
 
 // ============================================================================
 // Test Helpers - RPM Buffer Construction

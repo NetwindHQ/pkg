@@ -1,9 +1,6 @@
 import type { RpmHeaderData, RpmChangelogEntry } from '../types';
 import { extractRpmArchFromFilename } from '../utils/architectures';
 
-// Re-export for backward compatibility
-export { extractRpmArchFromFilename };
-
 /**
  * RPM Package Parser
  *
@@ -70,6 +67,32 @@ const RPM_TYPE = {
   STRING_ARRAY: 8,
   I18NSTRING: 9,
 } as const;
+
+/**
+ * Parse a STRING_ARRAY from RPM header data.
+ * Handles UTF-8 encoding correctly by advancing by actual byte count,
+ * not JavaScript string length (which counts UTF-16 code units).
+ *
+ * @param bytes - The byte array containing the strings
+ * @param offset - Starting offset in the byte array
+ * @param count - Number of strings to extract
+ * @returns Array of decoded strings
+ */
+export function parseStringArray(bytes: Uint8Array, offset: number, count: number): string[] {
+  const strings: string[] = [];
+  let pos = offset;
+  for (let i = 0; i < count; i++) {
+    // Find null terminator by scanning bytes directly
+    let end = pos;
+    while (end < bytes.length && bytes[end] !== 0) {
+      end++;
+    }
+    const str = new TextDecoder('utf-8').decode(bytes.slice(pos, end));
+    strings.push(str);
+    pos = end + 1; // Advance by actual byte count
+  }
+  return strings;
+}
 
 // Range request size for RPM headers (file lists can be larger)
 const RANGE_REQUEST_SIZE = 262144; // 256KB
@@ -178,8 +201,11 @@ function buildFileList(
 
   const files: string[] = [];
   for (let i = 0; i < basenames.length; i++) {
-    const dirIndex = dirindexes[i] || 0;
-    const dirname = dirnames[dirIndex] || '/';
+    const dirIndex = dirindexes[i] ?? 0;
+    // Bounds check to prevent accessing undefined directory
+    const dirname = (dirIndex >= 0 && dirIndex < dirnames.length)
+      ? dirnames[dirIndex]
+      : '/';
     files.push(dirname + basenames[i]);
   }
 
@@ -306,16 +332,8 @@ function readTagValue(
     case RPM_TYPE.I18NSTRING:
       return readNullTerminatedString(bytes, offset);
 
-    case RPM_TYPE.STRING_ARRAY: {
-      const strings: string[] = [];
-      let pos = offset;
-      for (let i = 0; i < count; i++) {
-        const str = readNullTerminatedString(bytes, pos);
-        strings.push(str);
-        pos += str.length + 1;
-      }
-      return strings;
-    }
+    case RPM_TYPE.STRING_ARRAY:
+      return parseStringArray(bytes, offset, count);
 
     default:
       return '';

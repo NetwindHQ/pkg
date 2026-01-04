@@ -1,6 +1,7 @@
 import type { Env, RouteInfo, PackageEntry, RpmPackageEntry, GitHubRelease, AggregatedAsset } from './types';
 import { GitHubClient, getArchitecturesFromAssets } from './github/api';
 import { CacheManager, createCacheManager, computeReleaseIdsHash, type ReleaseVariant } from './cache/cache';
+import { mapWithConcurrencyFiltered } from './utils/concurrency';
 import {
   generatePackagesFile,
   buildPackageEntry,
@@ -107,7 +108,7 @@ export default {
           return handlePackagesGz(route, github, cache, env, ctx);
 
         case 'binary':
-          return handleBinaryRedirect(route, github, cache);
+          return handleBinaryRedirect(route, github, cache, env);
 
         case 'by-hash':
           return handleByHash(route, github, cache, env, ctx);
@@ -138,7 +139,7 @@ export default {
           return handleRpmXml(route, github, cache, env, ctx, 'other', true);
 
         case 'rpm-binary':
-          return handleBinaryRedirect(route, github, cache, 'rpm');
+          return handleBinaryRedirect(route, github, cache, env, 'rpm');
 
         default:
           return new Response('Not Found', { status: 404 });
@@ -548,7 +549,7 @@ async function validateAndRefreshCache(
 
     if (releases.length === 0) return;
 
-    const currentHash = computeReleaseIdsHash(releases);
+    const currentHash = await computeReleaseIdsHash(releases);
     const needsRefresh = await cache.needsRefresh(owner, repo, releaseVariant, currentHash);
 
     if (needsRefresh) {
@@ -619,14 +620,14 @@ async function generateReleaseContent(
   const config = {
     ...defaultReleaseConfig(owner, repo),
     architectures: architectures,
-    date: new Date(releases[0].published_at), // Most recent release
+    date: new Date(releases[0].published_at!), // Most recent release (non-null: drafts filtered)
   };
 
   // Build entries for all architectures
   const entries = await buildReleaseEntries(packagesContentByArch, component);
 
   // Update cache metadata with release IDs hash
-  const releaseIdsHash = computeReleaseIdsHash(releases);
+  const releaseIdsHash = await computeReleaseIdsHash(releases);
   ctx.waitUntil(cache.setReleaseIdsHash(owner, repo, releaseVariant, releaseIdsHash));
 
   return generateReleaseFile(config, entries);
@@ -646,7 +647,7 @@ async function generateAndCacheAll(
   if (releases.length === 0) return;
 
   // Compute release hash for cache invalidation
-  const releaseHash = computeReleaseIdsHash(releases);
+  const releaseHash = await computeReleaseIdsHash(releases);
 
   // Aggregate assets from all releases
   const allAssets = aggregateAssets(releases);
@@ -689,7 +690,7 @@ async function generateAndCacheAll(
   const config = {
     ...defaultReleaseConfig(owner, repo),
     architectures: architectures,
-    date: new Date(releases[0].published_at), // Most recent release
+    date: new Date(releases[0].published_at!), // Most recent release (non-null: drafts filtered)
   };
 
   const entries = await buildReleaseEntries(packagesContentByArch, component);
@@ -847,8 +848,8 @@ async function getPackagesContent(
 
   const content = generatePackagesFile(packages);
 
-  // Cache in background
-  const releaseIdsHash = computeReleaseIdsHash(releases);
+  // Cache in background (compute hash first, then cache in parallel)
+  const releaseIdsHash = await computeReleaseIdsHash(releases);
   ctx.waitUntil(
     Promise.all([
       cache.setPackagesFile(owner, repo, architecture, releaseVariant, content),
@@ -868,20 +869,91 @@ async function generatePackagesContentMultiRelease(
   assets: AggregatedAsset[],
   githubToken?: string
 ): Promise<PackageEntry[]> {
-  // Build package entries in parallel (fetches metadata via Range requests)
-  const entries = await Promise.all(
-    assets.map(async (asset) => {
+  // Build package entries with concurrency limiting to avoid subrequest limits
+  // (Cloudflare Workers limits: 50 free tier, 1000 paid tier)
+  return mapWithConcurrencyFiltered(
+    assets,
+    async (asset) => {
       try {
         return await buildPackageEntry(asset, owner, repo, asset.releaseTagName, githubToken);
       } catch (error) {
         console.error(`Failed to process ${asset.name}:`, error);
         return null;
       }
-    })
+    },
+    30 // Conservative concurrency limit for both tiers
   );
+}
 
-  // Filter out failed entries
-  return entries.filter((e): e is PackageEntry => e !== null);
+/**
+ * Check if a GitHub download URL is publicly accessible (no auth required).
+ * Uses a HEAD request to avoid downloading the full file.
+ * Returns true for public repos, false for private repos requiring auth.
+ */
+async function isPubliclyAccessible(url: string): Promise<boolean> {
+  try {
+    const response = await fetch(url, {
+      method: 'HEAD',
+      redirect: 'follow',
+    });
+    // 200 = accessible, 401/403 = requires auth
+    return response.ok;
+  } catch {
+    // Network error - assume private to be safe
+    return false;
+  }
+}
+
+/**
+ * Proxy a GitHub asset download, passing through the auth token.
+ * This enables access to private repository assets where redirect would fail
+ * (because the browser_download_url drops the Authorization header).
+ */
+async function proxyGitHubDownload(url: string, token: string): Promise<Response> {
+  const response = await fetch(url, {
+    headers: {
+      'Authorization': `token ${token}`,
+      'Accept': 'application/octet-stream',
+      'User-Agent': 'Reprox/1.0',
+    },
+    redirect: 'follow',
+  });
+
+  if (!response.ok) {
+    return new Response(`Failed to fetch asset: ${response.status}`, { status: response.status });
+  }
+
+  // Stream the response through without buffering the entire file
+  return new Response(response.body, {
+    status: 200,
+    headers: {
+      'Content-Type': response.headers.get('Content-Type') || 'application/octet-stream',
+      'Content-Length': response.headers.get('Content-Length') || '',
+      'Cache-Control': 'public, max-age=3600',
+    },
+  });
+}
+
+/**
+ * Serve a GitHub asset - either redirect (public) or proxy (private).
+ * Auto-detects repo privacy by checking if the URL is publicly accessible.
+ */
+async function serveAsset(url: string, token?: string): Promise<Response> {
+  // Check if URL is publicly accessible (public repo)
+  const isPublic = await isPubliclyAccessible(url);
+
+  if (isPublic) {
+    // Public repos: redirect to GitHub's CDN - offloads bandwidth from Worker
+    return Response.redirect(url, 302);
+  }
+
+  // Private repos: proxy through Worker to pass auth token
+  if (token) {
+    return proxyGitHubDownload(url, token);
+  }
+
+  // Private repo but no token - can't access
+  return new Response('Asset requires authentication', { status: 401 });
 }
 
 /**
@@ -893,11 +965,15 @@ async function generatePackagesContentMultiRelease(
  * We extract just the filename (last segment) and find the matching
  * GitHub release asset to redirect to. Uses cached URL when available,
  * otherwise searches across ALL releases.
+ *
+ * Auto-detects repo privacy: public repos get 302 redirect to GitHub's CDN,
+ * private repos get proxied through the Worker with authentication.
  */
 async function handleBinaryRedirect(
   route: RouteInfo,
   github: GitHubClient,
   cache: CacheManager,
+  env: Env,
   packageType: 'deb' | 'rpm' = 'deb'
 ): Promise<Response> {
   const { owner, repo, filename, releaseVariant } = route;
@@ -909,7 +985,7 @@ async function handleBinaryRedirect(
     if (cachedReleaseHash) {
       const cachedUrl = await cache.getAssetUrl(owner, repo, filename, releaseVariant, cachedReleaseHash);
       if (cachedUrl) {
-        return Response.redirect(cachedUrl, 302);
+        return serveAsset(cachedUrl, env.GITHUB_TOKEN);
       }
     }
 
@@ -921,15 +997,14 @@ async function handleBinaryRedirect(
       return new Response(`${typeName} not found: ${filename}`, { status: 404 });
     }
 
-    const releaseHash = computeReleaseIdsHash(releases);
+    const releaseHash = await computeReleaseIdsHash(releases);
 
     for (const release of releases) {
       const asset = release.assets.find(a => a.name === filename);
       if (asset) {
         // Cache the URL for next time (keyed by release hash for auto-invalidation)
         await cache.setAssetUrl(owner, repo, filename, releaseVariant, releaseHash, asset.browser_download_url);
-        // 302 redirect to GitHub's CDN - offloads bandwidth from Worker
-        return Response.redirect(asset.browser_download_url, 302);
+        return serveAsset(asset.browser_download_url, env.GITHUB_TOKEN);
       }
     }
 
@@ -1008,7 +1083,7 @@ async function validateAndRefreshRepomd(
 
     if (releases.length === 0) return;
 
-    const currentHash = computeReleaseIdsHash(releases);
+    const currentHash = await computeReleaseIdsHash(releases);
     const needsRefresh = await cache.needsRefresh(owner, repo, releaseVariant, currentHash);
 
     if (needsRefresh) {
@@ -1115,18 +1190,19 @@ async function buildRpmPackages(
 ): Promise<RpmPackageEntry[]> {
   const rpmAssets = filterRpmAssets(assets);
 
-  const entries = await Promise.all(
-    rpmAssets.map(async (asset) => {
+  // Build RPM entries with concurrency limiting to avoid subrequest limits
+  return mapWithConcurrencyFiltered(
+    rpmAssets,
+    async (asset) => {
       try {
         return await buildRpmPackageEntry(asset, githubToken);
       } catch (error) {
         console.error(`Failed to process ${asset.name}:`, error);
         return null;
       }
-    })
+    },
+    30 // Conservative concurrency limit for both tiers
   );
-
-  return entries.filter((e): e is RpmPackageEntry => e !== null);
 }
 
 /**
@@ -1229,9 +1305,9 @@ async function getCachedRpmMetadata(
   const packages = await buildRpmPackages(allAssets, env.GITHUB_TOKEN);
   const metadata = generateRpmXmlMetadata(packages);
 
-  // Use most recent release's timestamp
-  const timestamp = Math.floor(new Date(releases[0].published_at).getTime() / 1000);
-  const releaseIdsHash = computeReleaseIdsHash(releases);
+  // Use most recent release's timestamp (non-null assertion safe: drafts filtered out)
+  const timestamp = Math.floor(new Date(releases[0].published_at!).getTime() / 1000);
+  const releaseIdsHash = await computeReleaseIdsHash(releases);
 
   // Cache in background (including asset URLs for efficient binary redirects)
   ctx.waitUntil(
@@ -1265,7 +1341,7 @@ async function validateAndRefreshRpmCache(
 
     if (releases.length === 0) return;
 
-    const currentHash = computeReleaseIdsHash(releases);
+    const currentHash = await computeReleaseIdsHash(releases);
     const needsRefresh = await cache.needsRefresh(owner, repo, releaseVariant, currentHash);
 
     if (needsRefresh) {
@@ -1273,7 +1349,8 @@ async function validateAndRefreshRpmCache(
       const allAssets = aggregateAssets(releases);
       const packages = await buildRpmPackages(allAssets, env.GITHUB_TOKEN);
       const metadata = generateRpmXmlMetadata(packages);
-      const timestamp = Math.floor(new Date(releases[0].published_at).getTime() / 1000);
+      // Non-null assertion safe: drafts are filtered out in getAllReleases
+      const timestamp = Math.floor(new Date(releases[0].published_at!).getTime() / 1000);
 
       await Promise.all([
         cache.setRpmPrimaryXml(owner, repo, releaseVariant, metadata.primaryXml),

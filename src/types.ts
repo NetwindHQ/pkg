@@ -35,7 +35,7 @@ export interface RouteInfo {
 export interface GitHubRelease {
   id: number;
   tag_name: string;
-  published_at: string;
+  published_at: string | null; // null for draft releases
   prerelease: boolean;
   assets: GitHubAsset[];
 }
@@ -48,7 +48,6 @@ export interface GitHubAsset {
   name: string;
   size: number;
   browser_download_url: string;
-  content_type: string;
   digest?: string; // SHA256 digest in format "sha256:..."
 }
 
@@ -81,7 +80,6 @@ export interface PackageEntry {
   filename: string;
   size: number;
   sha256: string;
-  md5sum: string;
 }
 
 /**
