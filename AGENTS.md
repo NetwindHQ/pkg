@@ -9,7 +9,9 @@ Reprox is a serverless APT/RPM repository gateway that transforms GitHub Release
 **Key Features:**
 - Serves packages from **all GitHub releases** (not just the latest)
 - Supports **prerelease variant** via `/prerelease` path segment
+- **Private repository support** with auto-detection (proxies downloads with auth)
 - Only includes packages with valid **SHA256 digests** (GitHub added this feature in June 2025)
+- Excludes **draft releases** (identified by `published_at === null`)
 - Uses **pagination** with `per_page=100` (up to 5,000 releases max)
 
 ## Common Commands
@@ -54,6 +56,9 @@ npm run typecheck    # TypeScript type checking (tsc --noEmit)
 - Extends `GitHubAsset` with `releaseTagName` and `releaseId`
 - Used to track which release each package came from
 
+**GitHubRelease** (`src/types.ts`) - Release metadata:
+- `published_at` is `string | null` - null indicates a draft release (excluded from processing)
+
 ### Key Modules
 
 **Parsers** (`src/parsers/`)
@@ -72,6 +77,7 @@ npm run typecheck    # TypeScript type checking (tsc --noEmit)
 - `streams.ts` - Stream reading utilities (`readStreamToBuffer`, `concatUint8Arrays`)
 - `architectures.ts` - Architecture detection from filenames (Debian and RPM)
 - `xml.ts` - XML escaping and control character sanitization (removes invalid XML 1.0 chars)
+- `concurrency.ts` - Concurrency-limited Promise execution (`mapWithConcurrency`, `mapWithConcurrencyFiltered`) to avoid Cloudflare subrequest limits
 
 **Other**
 - `src/signing/gpg.ts` - OpenPGP signing (cleartext and detached)
@@ -84,7 +90,14 @@ npm run typecheck    # TypeScript type checking (tsc --noEmit)
 **Multi-Release Aggregation:**
 - `getAllReleases()` fetches all releases with pagination (`per_page=100`, max 50 pages = 5,000 releases)
 - `aggregateAssets()` flattens assets from all releases with release context
+- Draft filtering: releases with `published_at === null` are always excluded
 - Prerelease filtering: `includePrerelease` parameter controls whether to include prereleases
+
+**Private Repository Support:**
+- Auto-detects repo privacy using HEAD request to check URL accessibility
+- Public repos: 302 redirect to GitHub's CDN (offloads bandwidth)
+- Private repos: Proxies download through Worker with `Authorization: token` header
+- Requires `GITHUB_TOKEN` for private repo access
 
 **Digest Filtering:**
 - GitHub added SHA256 digests to release assets in June 2025
@@ -93,9 +106,14 @@ npm run typecheck    # TypeScript type checking (tsc --noEmit)
 
 **Cache Strategy:**
 - All cache keys include `variant` (stable/prerelease) for isolation
-- Release IDs hash (`computeReleaseIdsHash()`) detects when releases change
+- `computeReleaseIdsHash()` (async) computes SHA256 of release IDs + asset digests for cache invalidation
 - Asset URLs are cached for efficient binary redirects
 - Background validation refreshes cache without blocking requests
+
+**Concurrency Limiting:**
+- Cloudflare Workers has subrequest limits (50 free tier, 1000 paid)
+- `mapWithConcurrencyFiltered()` processes assets with limited parallelism (default: 30)
+- Prevents hitting subrequest limits when processing many packages
 
 **Range Requests:** Only fetches package headers to minimize bandwidth (64KB for .deb, 256KB for .rpm)
 
@@ -140,7 +158,7 @@ Optional secrets (set via `wrangler secret put`):
 - `GPG_PRIVATE_KEY` - Armored GPG private key for repository signing (public key is auto-extracted)
 - `GPG_PASSPHRASE` - Passphrase for encrypted GPG private keys (optional, only needed if key is passphrase-protected)
 - `GPG_PUBLIC_KEY` - Armored GPG public key (optional override, normally extracted from private key)
-- `GITHUB_TOKEN` - GitHub personal access token for higher API rate limits (recommended for multi-release pagination)
+- `GITHUB_TOKEN` - GitHub personal access token for higher API rate limits and private repository access
 - `CACHE_TTL` - Cache TTL in seconds for content (default: 86400). Release IDs hash uses a 5-minute TTL for freshness checks.
 
 ## Testing
@@ -243,7 +261,7 @@ Set secrets using `npx wrangler secret put <NAME>`:
 | `GPG_PRIVATE_KEY` | Recommended | ASCII-armored GPG private key for repository signing |
 | `GPG_PASSPHRASE` | If key is encrypted | Passphrase for the GPG private key |
 | `GPG_PUBLIC_KEY` | No | Override auto-extracted public key (rarely needed) |
-| `GITHUB_TOKEN` | Recommended | GitHub PAT for higher API rate limits |
+| `GITHUB_TOKEN` | Recommended | GitHub PAT for higher API rate limits and private repo access |
 
 ### Environment Variables
 

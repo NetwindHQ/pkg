@@ -37,9 +37,7 @@ export async function mapWithConcurrency<T, R>(
 
   // Start up to `concurrency` workers
   const workerCount = Math.min(concurrency, items.length);
-  const workers = Array(workerCount)
-    .fill(null)
-    .map(() => worker());
+  const workers = Array.from({ length: workerCount }, () => worker());
 
   await Promise.all(workers);
   return results;

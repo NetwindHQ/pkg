@@ -1,5 +1,4 @@
 import type { RpmHeaderData, RpmChangelogEntry } from '../types';
-import { extractRpmArchFromFilename } from '../utils/architectures';
 
 /**
  * RPM Package Parser

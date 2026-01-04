@@ -1,7 +1,7 @@
 # 📦 Reprox — A Serverless Github Releases APT/RPM Gateway
 https://github.com/leoherzog/reprox
 
-There are many great Linux softwares that distribute .deb and/or .rpm packages via Github Releases only. Reprox turns any GitHub repository that uses Releases into a fully compliant APT or COPR repository. Package downloads redirect straight to GitHub's CDN, moving the trust model from the maintainer of an APT/COPR repository to the maintainer of the GitHub repository.
+There are many great Linux softwares that distribute .deb and/or .rpm packages via Github Releases only. Reprox turns any GitHub repository that uses Releases into a fully compliant APT (deb) or COPR (rpm) repository. Package downloads redirect straight to GitHub's CDN, moving the trust model from the maintainer of an APT/COPR repository to the maintainer of the GitHub repository.
 
 I made this for my own personal use, so I didn't have to "Watch" for new Github Releases and manually download/install updates. I recognize that I am man-in-the-middling the traditional trust model for package repositories. Be careful to add only trusted, official upstream Github repositories. If you're worried about me man-in-the-middleing you, skip ahead to [the Self-Hosting section](#self-hosting).
 
@@ -79,7 +79,7 @@ sudo dnf install {package}
 # Verify the instance's fingerprint by browsing to it in your web browser
 ```
 > [!NOTE]
-> `gpgcheck=0` disables individual package signature verification because Reprox redirects downloads to GitHub without re-signing. Package integrity is still verified via checksums in the signed repository metadata (`repo_gpgcheck=1`).
+> `gpgcheck=0` disables individual package signature verification because Reprox serves packages from GitHub without re-signing. Package integrity is still verified via checksums in the signed repository metadata (`repo_gpgcheck=1`).
 
 ## Self-Hosting
 
@@ -107,7 +107,7 @@ gpg --armor --export-secret-keys "Reprox" | npx wrangler secret put GPG_PRIVATE_
 # Optional: if using a GPG key that has a passphrase
 npx wrangler secret put GPG_PASSPHRASE
 
-# Optional: add GitHub token for higher rate limits (60 → 5,000 req/hr)
+# Optional: add GitHub token for higher rate limits (60 → 5,000 req/hr) and private repo access
 npx wrangler secret put GITHUB_TOKEN
 
 # Deploy
