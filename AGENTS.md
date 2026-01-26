@@ -325,4 +325,10 @@ The `getAllReleases()` function has a `MAX_PAGES = 50` limit to prevent infinite
 
 ### Cache Consistency
 
-All derived artifacts (InRelease, Release.gpg, repomd.xml) are generated and cached together to ensure checksums match. The gzip compression uses consistent output to avoid checksum mismatches between cached repomd.xml and served .xml.gz files.
+**Critical**: Metadata files containing checksums (Release, InRelease, repomd.xml) must always be regenerated together with the files they reference (Packages, primary.xml, etc.). If they're cached independently and refreshed at different times, clients will see checksum mismatches.
+
+**APT**: `generateAndCacheAll()` regenerates all files atomically - Packages for all architectures, Release, InRelease, and Release.gpg together.
+
+**RPM**: Both `validateAndRefreshRpmCache()` and `validateAndRefreshRepomd()` regenerate ALL metadata atomically - primary.xml, filelists.xml, other.xml, repomd.xml, and repomd.xml.asc together. This prevents checksum mismatches between repomd.xml and the XML files it references.
+
+**Stale-While-Revalidate**: The cache uses a stale-while-revalidate pattern - cached content is returned immediately while freshness is validated in background. This means the first request after a new release may receive stale (but internally consistent) data. Subsequent requests get fresh data. For immediate invalidation, use `?cache=false` query parameter.

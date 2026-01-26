@@ -1067,7 +1067,9 @@ async function getRepomdWithSignature(
 }
 
 /**
- * Background task to validate and refresh repomd cache if needed
+ * Background task to validate and refresh repomd cache if needed.
+ * IMPORTANT: When refresh is needed, we regenerate XML files fresh from GitHub
+ * (not from cache) to ensure checksums in repomd.xml match the actual content.
  */
 async function validateAndRefreshRepomd(
   route: RouteInfo,
@@ -1087,11 +1089,34 @@ async function validateAndRefreshRepomd(
     const needsRefresh = await cache.needsRefresh(owner, repo, releaseVariant, currentHash);
 
     if (needsRefresh) {
-      // Regenerate repomd and signature
-      const files = await getRpmMetadataFiles(route, github, cache, env, ctx);
-      const repomdXml = await generateRepomdXml(files);
+      // Regenerate XML files fresh from GitHub releases (bypass cache to ensure consistency)
+      const allAssets = aggregateAssets(releases);
+      const packages = await buildRpmPackages(allAssets, env.GITHUB_TOKEN);
+      const metadata = generateRpmXmlMetadata(packages);
+      const timestamp = Math.floor(new Date(releases[0].published_at!).getTime() / 1000);
 
+      // Compress XML files for repomd.xml checksum calculation
+      const [primaryGz, filelistsGz, otherGz] = await Promise.all([
+        gzipCompress(metadata.primaryXml),
+        gzipCompress(metadata.filelistsXml),
+        gzipCompress(metadata.otherXml),
+      ]);
+
+      // Generate repomd.xml with correct checksums
+      const repomdFiles: RepomdFileInfo = {
+        primary: { xml: metadata.primaryXml, gz: primaryGz },
+        filelists: { xml: metadata.filelistsXml, gz: filelistsGz },
+        other: { xml: metadata.otherXml, gz: otherGz },
+        timestamp,
+      };
+      const repomdXml = await generateRepomdXml(repomdFiles);
+
+      // Cache everything atomically - XML files, repomd.xml, and signature
       const cachePromises: Promise<void>[] = [
+        cache.setRpmPrimaryXml(owner, repo, releaseVariant, metadata.primaryXml),
+        cache.setRpmFilelistsXml(owner, repo, releaseVariant, metadata.filelistsXml),
+        cache.setRpmOtherXml(owner, repo, releaseVariant, metadata.otherXml),
+        cache.setRpmTimestamp(owner, repo, releaseVariant, timestamp),
         cache.setRpmRepomd(owner, repo, releaseVariant, repomdXml),
         cache.setReleaseIdsHash(owner, repo, releaseVariant, currentHash),
       ];
@@ -1325,7 +1350,10 @@ async function getCachedRpmMetadata(
 }
 
 /**
- * Background task to validate and refresh RPM cache if needed
+ * Background task to validate and refresh RPM cache if needed.
+ * IMPORTANT: When XML files change, we MUST also regenerate repomd.xml
+ * to ensure checksums stay consistent. Otherwise DNF will see mismatched
+ * checksums between repomd.xml and the actual XML files.
  */
 async function validateAndRefreshRpmCache(
   route: RouteInfo,
@@ -1352,13 +1380,39 @@ async function validateAndRefreshRpmCache(
       // Non-null assertion safe: drafts are filtered out in getAllReleases
       const timestamp = Math.floor(new Date(releases[0].published_at!).getTime() / 1000);
 
-      await Promise.all([
+      // Compress XML files for repomd.xml checksum calculation
+      const [primaryGz, filelistsGz, otherGz] = await Promise.all([
+        gzipCompress(metadata.primaryXml),
+        gzipCompress(metadata.filelistsXml),
+        gzipCompress(metadata.otherXml),
+      ]);
+
+      // Generate repomd.xml with correct checksums for the new XML files
+      const repomdFiles: RepomdFileInfo = {
+        primary: { xml: metadata.primaryXml, gz: primaryGz },
+        filelists: { xml: metadata.filelistsXml, gz: filelistsGz },
+        other: { xml: metadata.otherXml, gz: otherGz },
+        timestamp,
+      };
+      const repomdXml = await generateRepomdXml(repomdFiles);
+
+      // Cache everything atomically - XML files, repomd.xml, and signature
+      const cachePromises: Promise<void>[] = [
         cache.setRpmPrimaryXml(owner, repo, releaseVariant, metadata.primaryXml),
         cache.setRpmFilelistsXml(owner, repo, releaseVariant, metadata.filelistsXml),
         cache.setRpmOtherXml(owner, repo, releaseVariant, metadata.otherXml),
         cache.setRpmTimestamp(owner, repo, releaseVariant, timestamp),
         cache.setReleaseIdsHash(owner, repo, releaseVariant, currentHash),
-      ]);
+        cache.setRpmRepomd(owner, repo, releaseVariant, repomdXml),
+      ];
+
+      // Also regenerate signature if GPG is configured
+      if (env.GPG_PRIVATE_KEY) {
+        const signature = await signDetachedBinary(repomdXml, env.GPG_PRIVATE_KEY, env.GPG_PASSPHRASE);
+        cachePromises.push(cache.setRpmRepomdAsc(owner, repo, releaseVariant, signature));
+      }
+
+      await Promise.all(cachePromises);
     }
   } catch (error) {
     console.error('Background RPM cache validation failed:', error);
