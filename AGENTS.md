@@ -45,6 +45,10 @@ npm run typecheck    # TypeScript type checking (tsc --noEmit)
 - **RPM**: `/{owner}/{repo}/prerelease/repodata/repomd.xml`, etc.
 - **Common**: `/{owner}/{repo}/prerelease/public.key`
 
+**Internal API (for landing page search box):**
+- `/_/search?q={query}` - Proxies GitHub repository search with authenticated token and Cache API caching (5 min TTL)
+- `/_/package?owner={owner}&repo={repo}` - Extracts package name from latest release `.deb`/`.rpm` asset filenames, cached (5 min TTL)
+
 ### Key Types
 
 **RouteInfo** (`src/types.ts`) - Parsed URL information:
@@ -84,6 +88,14 @@ npm run typecheck    # TypeScript type checking (tsc --noEmit)
 - `src/github/api.ts` - GitHub API client with `getAllReleases()` pagination
 - `src/cache/cache.ts` - Cache API wrapper with variant-aware keys
 - `src/lib/xz.ts` - XZ decompression wrapper for Workers (see below)
+
+**Landing Page** (`scripts/build-readme.ts` → `src/generated/readme-html.ts`)
+- Build script reads `README.md`, renders to HTML via `marked` with syntax highlighting, inlines and optimizes all CSS (PurgeCSS + cssnano), and exports a static HTML string
+- Injects an interactive search box after the "Usage" heading that lets visitors search for GitHub repos and auto-fill `{owner}`, `{repo}`, `{package}` placeholders throughout the page
+- The search box CSS uses `github-markdown-css` v5 custom properties for automatic dark mode; semantic HTML (`<strong>`, `<small>`, `<a>`) leverages upstream styles where possible
+- Client-side JS uses `TreeWalker` for text node replacement (preserves DOM/event listeners) and `display: none` to hide instruction comments when a repo is selected
+- All CSS classes used by the search box must appear in the `searchBoxSkeleton` variable so PurgeCSS preserves them
+- The `/_/search` and `/_/package` endpoints in `src/index.ts` proxy GitHub API calls server-side using `GITHUB_TOKEN` for higher rate limits, with Cache API caching
 
 ### Design Patterns
 

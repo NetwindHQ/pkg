@@ -64,6 +64,16 @@ export default {
         return handleFavicon();
       }
 
+      // Handle search API - proxies GitHub search with auth token and caching
+      if (url.pathname === '/_/search') {
+        return handleSearchApi(url, env);
+      }
+
+      // Handle package name extraction from latest release
+      if (url.pathname === '/_/package') {
+        return handlePackageApi(url, env);
+      }
+
       // Validate route has owner/repo
       if (!route.owner || !route.repo) {
         return new Response('Invalid repository path. Use /{owner}/{repo}/...', { status: 400 });
@@ -360,6 +370,149 @@ function handleFavicon(): Response {
       'Cache-Control': 'public, max-age=86400',
     },
   });
+}
+
+/**
+ * Handle search API request - proxies GitHub repository search
+ * with authenticated token for higher rate limits and caches results
+ */
+async function handleSearchApi(url: URL, env: Env): Promise<Response> {
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Content-Type': 'application/json',
+    'Cache-Control': 'public, max-age=300',
+  };
+
+  const query = url.searchParams.get('q')?.trim();
+  if (!query || query.length < 2) {
+    return new Response(JSON.stringify({ items: [] }), { headers: corsHeaders });
+  }
+
+  // Check cache first
+  const cache = await caches.open('reprox');
+  const cacheKey = new Request(`https://reprox.internal/search/${encodeURIComponent(query)}`);
+  const cached = await cache.match(cacheKey);
+  if (cached) return cached;
+
+  // Proxy to GitHub search API with auth
+  const headers: HeadersInit = {
+    Accept: 'application/vnd.github.v3+json',
+    'User-Agent': 'Reprox/1.0',
+  };
+  if (env.GITHUB_TOKEN) {
+    headers['Authorization'] = `token ${env.GITHUB_TOKEN}`;
+  }
+
+  const ghResponse = await fetch(
+    `https://api.github.com/search/repositories?q=${encodeURIComponent(query)}+in:name&per_page=8&sort=stars`,
+    { headers }
+  );
+
+  if (!ghResponse.ok) {
+    return new Response(JSON.stringify({ error: 'Search failed' }), {
+      status: ghResponse.status,
+      headers: corsHeaders,
+    });
+  }
+
+  const data = await ghResponse.json() as { items?: Array<{ full_name: string; description: string | null; stargazers_count: number }> };
+  const items = (data.items || []).map(r => ({
+    full_name: r.full_name,
+    description: r.description,
+    stargazers_count: r.stargazers_count,
+  }));
+
+  const response = new Response(JSON.stringify({ items }), { headers: corsHeaders });
+
+  // Cache for 5 minutes
+  const cacheResponse = new Response(JSON.stringify({ items }), {
+    headers: { ...corsHeaders, 'Cache-Control': 'public, max-age=300' },
+  });
+  await cache.put(cacheKey, cacheResponse);
+
+  return response;
+}
+
+/**
+ * Handle package name extraction API - fetches latest release assets
+ * and extracts the package name from .deb/.rpm filenames
+ */
+async function handlePackageApi(url: URL, env: Env): Promise<Response> {
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Content-Type': 'application/json',
+    'Cache-Control': 'public, max-age=300',
+  };
+
+  const owner = url.searchParams.get('owner')?.trim();
+  const repo = url.searchParams.get('repo')?.trim();
+  if (!owner || !repo) {
+    return new Response(JSON.stringify({ package: '', hasPackages: false }), { headers: corsHeaders });
+  }
+
+  // Check cache first
+  const cache = await caches.open('reprox');
+  const cacheKey = new Request(`https://reprox.internal/package/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`);
+  const cached = await cache.match(cacheKey);
+  if (cached) return cached;
+
+  // Fetch latest release with auth
+  const headers: HeadersInit = {
+    Accept: 'application/vnd.github.v3+json',
+    'User-Agent': 'Reprox/1.0',
+  };
+  if (env.GITHUB_TOKEN) {
+    headers['Authorization'] = `token ${env.GITHUB_TOKEN}`;
+  }
+
+  const ghResponse = await fetch(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/releases/latest`,
+    { headers }
+  );
+
+  if (!ghResponse.ok) {
+    return new Response(
+      JSON.stringify({ package: repo, hasPackages: false }),
+      { headers: corsHeaders }
+    );
+  }
+
+  const release = await ghResponse.json() as { assets?: Array<{ name: string }> };
+  const assets = release.assets || [];
+
+  let packageName = repo;
+  let hasPackages = false;
+
+  for (const asset of assets) {
+    const name = asset.name;
+    if (name.endsWith('.deb')) {
+      hasPackages = true;
+      const match = name.match(/^([a-z0-9][a-z0-9.+\-]+?)_\d/);
+      if (match) {
+        packageName = match[1];
+        break;
+      }
+    }
+    if (name.endsWith('.rpm')) {
+      hasPackages = true;
+      const match = name.match(/^([a-zA-Z0-9][a-zA-Z0-9._+\-]+?)-\d/);
+      if (match) {
+        packageName = match[1];
+        break;
+      }
+    }
+  }
+
+  const body = JSON.stringify({ package: packageName, hasPackages });
+  const response = new Response(body, { headers: corsHeaders });
+
+  // Cache for 5 minutes
+  const cacheResponse = new Response(body, {
+    headers: { ...corsHeaders, 'Cache-Control': 'public, max-age=300' },
+  });
+  await cache.put(cacheKey, cacheResponse);
+
+  return response;
 }
 
 /**

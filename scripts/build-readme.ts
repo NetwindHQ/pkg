@@ -156,6 +156,196 @@ marked.use({
 // Render markdown to HTML
 const renderedContent = marked.parse(processedMarkdown) as string;
 
+// Search box component injected after the Usage heading
+const searchBoxHtml = `<div class="reprox-search" id="reprox-search">
+  <label class="reprox-search-label" for="reprox-search-input">Try it &mdash; search for a GitHub repository to fill in the commands below:</label>
+  <div class="reprox-search-wrap">
+    <input class="reprox-search-input" id="reprox-search-input" type="text"
+           placeholder="e.g. joshuar/go-hass-agent" autocomplete="off">
+    <div class="reprox-search-results" id="reprox-search-results"></div>
+  </div>
+  <small class="reprox-search-status" id="reprox-search-status"></small>
+  <div class="reprox-search-active" id="reprox-search-active"></div>
+</div>`;
+
+// Inject search box between Usage heading and first subsection
+const finalContent = renderedContent.replace(
+  /<h2 id="usage">Usage<\/h2>\n<h3/,
+  `<h2 id="usage">Usage</h2>\n${searchBoxHtml}\n<h3`
+);
+
+if (finalContent === renderedContent) {
+  throw new Error('Failed to inject search box — the Usage heading pattern was not found in rendered HTML');
+}
+
+// Client-side JavaScript for the search box
+const clientScript = `<script>
+(function(){
+  var input=document.getElementById('reprox-search-input');
+  var results=document.getElementById('reprox-search-results');
+  var status=document.getElementById('reprox-search-status');
+  var banner=document.getElementById('reprox-search-active');
+  var content=document.getElementById('content');
+  var originals=[];
+  var hidden=[];
+  var timer=null;
+  var selIdx=-1;
+  var items=[];
+
+  input.addEventListener('input',function(){
+    clearTimeout(timer);
+    var q=this.value.trim();
+    if(q.length<2){hideResults();status.textContent='';return;}
+    status.textContent='Searching\\u2026';
+    timer=setTimeout(function(){doSearch(q);},300);
+  });
+
+  input.addEventListener('keydown',function(e){
+    if(e.key==='ArrowDown'){e.preventDefault();selIdx=Math.min(selIdx+1,items.length-1);highlight();}
+    else if(e.key==='ArrowUp'){e.preventDefault();selIdx=Math.max(selIdx-1,0);highlight();}
+    else if(e.key==='Enter'&&selIdx>=0){e.preventDefault();pick(items[selIdx]);}
+    else if(e.key==='Escape'){hideResults();}
+  });
+
+  document.addEventListener('click',function(e){
+    if(!e.target.closest('.reprox-search'))hideResults();
+  });
+
+  function doSearch(q){
+    fetch('/_/search?q='+encodeURIComponent(q))
+      .then(function(r){
+        if(r.status===403){status.textContent='Rate limited \\u2014 please wait a moment.';return;}
+        if(!r.ok){status.textContent='Search failed.';return;}
+        return r.json();
+      })
+      .then(function(data){
+        if(!data)return;
+        items=data.items||[];
+        selIdx=-1;
+        if(!items.length){status.textContent='No repositories found.';hideResults();return;}
+        status.textContent=items.length+' results';
+        render();
+      })
+      .catch(function(){status.textContent='Search failed.';});
+  }
+
+  function render(){
+    results.innerHTML=items.map(function(r,i){
+      var stars=r.stargazers_count||0;
+      var desc=r.description?'<small class="reprox-search-item-desc">'+esc(r.description)+'</small>':'';
+      return '<div class="reprox-search-item" data-i="'+i+'"><div class="reprox-search-item-name"><strong>'+esc(r.full_name)+
+        '</strong> <span style="color:var(--fgColor-muted,#59636e)">('+stars.toLocaleString()+' stars)</span></div>'+desc+'</div>';
+    }).join('');
+    results.querySelectorAll('.reprox-search-item').forEach(function(el){
+      el.addEventListener('click',function(){pick(items[+this.dataset.i]);});
+    });
+    results.classList.add('active');
+  }
+
+  function highlight(){
+    results.querySelectorAll('.reprox-search-item').forEach(function(el,i){
+      el.classList.toggle('selected',i===selIdx);
+      if(i===selIdx)el.scrollIntoView({block:'nearest'});
+    });
+  }
+
+  function hideResults(){results.classList.remove('active');selIdx=-1;}
+
+  function pick(repo){
+    hideResults();
+    var parts=repo.full_name.split('/');
+    var owner=parts[0],rname=parts[1],pkg=rname;
+    replacePlaceholders(owner,rname,pkg);
+    input.value=repo.full_name;
+    showBanner(owner,rname,pkg);
+    status.textContent='';
+
+    fetch('/_/package?owner='+encodeURIComponent(owner)+'&repo='+encodeURIComponent(rname))
+      .then(function(r){return r.ok?r.json():null;})
+      .then(function(data){
+        if(!data)return;
+        if(data.package&&data.package!==rname){
+          pkg=data.package;
+          replacePlaceholders(owner,rname,pkg);
+          showBanner(owner,rname,pkg);
+        }
+        if(!data.hasPackages){
+          status.textContent='Note: This repo\\u2019s latest release has no .deb or .rpm assets.';
+        }
+      })
+      .catch(function(){});
+  }
+
+  function showBanner(owner,rname,pkg){
+    var pkgNote=pkg!==rname?' (package: <code>'+esc(pkg)+'</code>)':'';
+    banner.innerHTML='Using <strong>'+esc(owner+'/'+rname)+'</strong>'+pkgNote+
+      ' \\u2014 all commands below are ready to copy.'+
+      '<a class="reprox-search-clear" id="reprox-clear">Reset</a>';
+    banner.classList.add('visible');
+    document.getElementById('reprox-clear').addEventListener('click',reset);
+  }
+
+  function replacePlaceholders(owner,repo,pkg){
+    restore();
+    hideHints();
+    var walker=document.createTreeWalker(content,NodeFilter.SHOW_TEXT,null);
+    var node;
+    while(node=walker.nextNode()){
+      var t=node.textContent;
+      if(t.indexOf('{owner}')!==-1||t.indexOf('{repo}')!==-1||t.indexOf('{package}')!==-1){
+        originals.push({node:node,text:t});
+        node.textContent=t.replace(/\\{owner\\}/g,owner).replace(/\\{repo\\}/g,repo).replace(/\\{package\\}/g,pkg);
+      }
+    }
+  }
+
+  function hideHints(){
+    content.querySelectorAll('.hljs-comment').forEach(function(el){
+      if(!el.textContent||el.textContent.indexOf('Replace {owner}')===-1)return;
+      el.style.display='none';
+      hidden.push({type:'style',node:el});
+      trimNewline(el);
+      var nextEl=el.nextElementSibling;
+      if(nextEl&&nextEl.classList.contains('hljs-comment')&&nextEl.textContent.trim()==='#'){
+        nextEl.style.display='none';
+        hidden.push({type:'style',node:nextEl});
+        trimNewline(nextEl);
+      }
+    });
+  }
+
+  function trimNewline(el){
+    var next=el.nextSibling;
+    if(next&&next.nodeType===3&&next.textContent.charAt(0)==='\\n'){
+      hidden.push({type:'text',node:next,text:next.textContent});
+      next.textContent=next.textContent.slice(1);
+    }
+  }
+
+  function restore(){
+    originals.forEach(function(o){o.node.textContent=o.text;});
+    originals=[];
+    hidden.forEach(function(h){
+      if(h.type==='style')h.node.style.display='';
+      else h.node.textContent=h.text;
+    });
+    hidden=[];
+  }
+
+  function reset(silent){
+    restore();
+    if(silent===true)return;
+    input.value='';
+    banner.classList.remove('visible');
+    banner.innerHTML='';
+    status.textContent='';
+  }
+
+  function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+})();
+<\/script>`;
+
+
 // Custom CSS that's always needed
 const customCss = `
   .markdown-body {
@@ -183,11 +373,100 @@ const customCss = `
     .site-footer a { color: #9198a1; }
     .site-footer a:hover { color: #4493f8; }
   }
+  .reprox-search {
+    border: 1px solid var(--borderColor-default, #d1d9e0);
+    border-radius: 6px;
+    padding: 16px;
+    margin-bottom: 16px;
+    background: var(--bgColor-muted, #f6f8fa);
+  }
+  .reprox-search-label {
+    font-weight: var(--base-text-weight-semibold, 600);
+    margin-bottom: 8px;
+    display: block;
+  }
+  .reprox-search-wrap { position: relative; }
+  .reprox-search-input {
+    width: 100%;
+    padding: 5px 12px;
+    font-size: 14px;
+    line-height: 20px;
+    border: 1px solid var(--borderColor-default, #d1d9e0);
+    border-radius: 6px;
+    background: var(--bgColor-default, #fff);
+    color: var(--fgColor-default, #1f2328);
+    box-sizing: border-box;
+    font-family: var(--fontStack-sansSerif);
+  }
+  .reprox-search-input:focus {
+    border-color: var(--borderColor-accent-emphasis, #0969da);
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(9,105,218,0.3);
+  }
+  .reprox-search-results {
+    position: absolute;
+    left: 0; right: 0;
+    z-index: 10;
+    border: 1px solid var(--borderColor-default, #d1d9e0);
+    border-radius: 6px;
+    margin-top: 4px;
+    max-height: 260px;
+    overflow-y: auto;
+    background: var(--bgColor-default, #fff);
+    display: none;
+  }
+  .reprox-search-results.active { display: block; }
+  .reprox-search-item {
+    padding: 8px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--borderColor-muted, #d1d9e0b3);
+    font-size: 14px;
+  }
+  .reprox-search-item:last-child { border-bottom: none; }
+  .reprox-search-item:hover,
+  .reprox-search-item.selected {
+    background: var(--bgColor-accent-muted, rgba(9,105,218,0.08));
+  }
+  .reprox-search-item-name {
+    color: var(--fgColor-accent, #0969da);
+  }
+  .reprox-search-item-desc {
+    color: var(--fgColor-muted, #59636e);
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .reprox-search-status {
+    color: var(--fgColor-muted, #59636e);
+    display: block;
+    padding: 4px 0 0;
+    min-height: 16px;
+  }
+  .reprox-search-active {
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: var(--bgColor-attention-muted, #fff8c5);
+    border-radius: 6px;
+    font-size: 14px;
+    display: none;
+  }
+  .reprox-search-active.visible { display: block; }
+  .reprox-search-clear {
+    margin-left: 8px;
+    cursor: pointer;
+  }
+  @media (prefers-color-scheme: dark) {
+    .reprox-search-input:focus {
+      box-shadow: 0 0 0 3px rgba(31,111,235,0.3);
+    }
+  }
 `;
 
 async function main() {
-  // Build a temporary HTML structure for CSS purging (includes footer for its styles)
-  const tempHtml = `<body class="markdown-body"><main>${renderedContent}</main><footer class="site-footer"><a href="#">link</a></footer></body>`;
+  // Build a temporary HTML structure for CSS purging (includes footer and search box for their styles)
+  const searchBoxSkeleton = `<div class="reprox-search"><label class="reprox-search-label">x</label><div class="reprox-search-wrap"><input class="reprox-search-input"><div class="reprox-search-results active"><div class="reprox-search-item selected"><div class="reprox-search-item-name"><strong>x</strong></div><small class="reprox-search-item-desc">x</small></div></div></div><small class="reprox-search-status">x</small><div class="reprox-search-active visible"><a class="reprox-search-clear">x</a></div></div>`;
+  const tempHtml = `<body class="markdown-body"><main>${renderedContent}${searchBoxSkeleton}</main><footer class="site-footer"><a href="#">link</a></footer></body>`;
 
   // Optimize all CSS in parallel
   const [optimizedGithubCss, optimizedLightCss, optimizedDarkCss, optimizedCustomCss] =
@@ -224,12 +503,13 @@ async function main() {
 </head>
 <body class="markdown-body">
   <main id="content">
-${renderedContent}
+${finalContent}
   </main>
   <footer class="site-footer">
     <a href="${gitInfo.url}">${gitInfo.label} ${gitInfo.version}</a>
     · Built ${buildTimestamp}{{FINGERPRINT_FOOTER}}
   </footer>
+${clientScript}
 </body>
 </html>`;
 
