@@ -40,7 +40,13 @@ const RPMTAG = {
   REQUIREVERSION: 1050,
   REQUIREFLAGS: 1048,
   CONFLICTNAME: 1054,
+  CONFLICTVERSION: 1055,
+  CONFLICTFLAGS: 1053,
   OBSOLETENAME: 1090,
+  OBSOLETEFLAGS: 1114,
+  OBSOLETEVERSION: 1115,
+  PROVIDEFLAGS: 1112,
+  PROVIDEVERSION: 1113,
   VENDOR: 1011,
   PACKAGER: 1015,
   // File list tags
@@ -91,6 +97,27 @@ export function parseStringArray(bytes: Uint8Array, offset: number, count: numbe
     pos = end + 1; // Advance by actual byte count
   }
   return strings;
+}
+
+/**
+ * Normalize a parsed header value to a string array.
+ * readTagValue returns string for count=1 STRING_ARRAY, string[] for count>1.
+ */
+function normalizeToStringArray(value: string | number | string[] | number[] | undefined): string[] {
+  if (value === undefined) return [];
+  if (Array.isArray(value)) return value.map(v => String(v));
+  const s = String(value);
+  return s ? [s] : [];
+}
+
+/**
+ * Normalize a parsed header value to a number array.
+ * readTagValue returns number for count=1 INT32, number[] for count>1.
+ */
+function normalizeToNumberArray(value: string | number | string[] | number[] | undefined): number[] {
+  if (value === undefined) return [];
+  if (Array.isArray(value)) return value.map(v => Number(v));
+  return [Number(value)];
 }
 
 // Range request size for RPM headers (file lists can be larger)
@@ -175,10 +202,18 @@ export function parseRpmBuffer(buffer: ArrayBuffer): RpmHeaderData {
     buildTime: headerData[RPMTAG.BUILDTIME] as number || 0,
     sourceRpm: headerData[RPMTAG.SOURCERPM] as string || '',
     installedSize: headerData[RPMTAG.SIZE] as number || 0,
-    requires: headerData[RPMTAG.REQUIRENAME] as string[] || [],
-    provides: headerData[RPMTAG.PROVIDENAME] as string[] || [],
-    conflicts: headerData[RPMTAG.CONFLICTNAME] as string[] || [],
-    obsoletes: headerData[RPMTAG.OBSOLETENAME] as string[] || [],
+    requires: normalizeToStringArray(headerData[RPMTAG.REQUIRENAME]),
+    requireVersions: normalizeToStringArray(headerData[RPMTAG.REQUIREVERSION]),
+    requireFlags: normalizeToNumberArray(headerData[RPMTAG.REQUIREFLAGS]),
+    provides: normalizeToStringArray(headerData[RPMTAG.PROVIDENAME]),
+    provideVersions: normalizeToStringArray(headerData[RPMTAG.PROVIDEVERSION]),
+    provideFlags: normalizeToNumberArray(headerData[RPMTAG.PROVIDEFLAGS]),
+    conflicts: normalizeToStringArray(headerData[RPMTAG.CONFLICTNAME]),
+    conflictVersions: normalizeToStringArray(headerData[RPMTAG.CONFLICTVERSION]),
+    conflictFlags: normalizeToNumberArray(headerData[RPMTAG.CONFLICTFLAGS]),
+    obsoletes: normalizeToStringArray(headerData[RPMTAG.OBSOLETENAME]),
+    obsoleteVersions: normalizeToStringArray(headerData[RPMTAG.OBSOLETEVERSION]),
+    obsoleteFlags: normalizeToNumberArray(headerData[RPMTAG.OBSOLETEFLAGS]),
     files,
     changelog,
   };

@@ -133,9 +133,17 @@ export interface RpmHeaderData {
   sourceRpm: string;
   installedSize: number; // Size when installed (from RPMTAG_SIZE)
   requires: string[];
+  requireVersions: string[];
+  requireFlags: number[];
   provides: string[];
+  provideVersions: string[];
+  provideFlags: number[];
   conflicts: string[];
+  conflictVersions: string[];
+  conflictFlags: number[];
   obsoletes: string[];
+  obsoleteVersions: string[];
+  obsoleteFlags: number[];
   // File list data
   files: string[];
   // Changelog data

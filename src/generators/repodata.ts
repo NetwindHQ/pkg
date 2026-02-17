@@ -98,6 +98,78 @@ ${packageEntries}
 `;
 }
 
+// RPM dependency flag bitmasks
+const RPMSENSE_LESS    = 0x02;
+const RPMSENSE_GREATER = 0x04;
+const RPMSENSE_EQUAL   = 0x08;
+// Pre-requirement flags
+const RPMSENSE_PREREQ        = 0x40;
+const RPMSENSE_SCRIPT_PRE    = 0x200;
+const RPMSENSE_SCRIPT_POST   = 0x400;
+const RPMSENSE_SCRIPT_PREUN  = 0x800;
+const RPMSENSE_SCRIPT_POSTUN = 0x1000;
+const RPMSENSE_PRE_MASK = RPMSENSE_PREREQ | RPMSENSE_SCRIPT_PRE | RPMSENSE_SCRIPT_POST | RPMSENSE_SCRIPT_PREUN | RPMSENSE_SCRIPT_POSTUN;
+
+/**
+ * Convert RPM flag bitmask to the string used in primary.xml
+ */
+function rpmFlagsToString(flags: number): string {
+  const cmp = flags & (RPMSENSE_LESS | RPMSENSE_GREATER | RPMSENSE_EQUAL);
+  switch (cmp) {
+    case RPMSENSE_LESS | RPMSENSE_EQUAL: return 'LE';
+    case RPMSENSE_GREATER | RPMSENSE_EQUAL: return 'GE';
+    case RPMSENSE_EQUAL: return 'EQ';
+    case RPMSENSE_LESS: return 'LT';
+    case RPMSENSE_GREATER: return 'GT';
+    default: return '';
+  }
+}
+
+/**
+ * Format a single rpm:entry element with optional version constraint and pre attribute
+ */
+function formatRpmEntry(name: string, flags: number, version: string): string {
+  const flagStr = rpmFlagsToString(flags);
+  const isPre = (flags & RPMSENSE_PRE_MASK) !== 0;
+
+  let entry = `      <rpm:entry name="${escapeXml(name)}"`;
+
+  if (flagStr && version) {
+    // Parse epoch from version string (format: "epoch:ver-rel" or just "ver-rel")
+    let epoch = '0';
+    let ver = version;
+    const colonIdx = version.indexOf(':');
+    if (colonIdx !== -1) {
+      epoch = version.slice(0, colonIdx);
+      ver = version.slice(colonIdx + 1);
+    }
+    entry += ` flags="${flagStr}" epoch="${epoch}" ver="${escapeXml(ver)}"`;
+  }
+
+  if (isPre) {
+    entry += ` pre="1"`;
+  }
+
+  entry += '/>';
+  return entry;
+}
+
+/**
+ * Format a dependency section (requires, provides, conflicts, obsoletes)
+ */
+function formatDepSection(
+  tag: string,
+  names: string[],
+  flags: number[],
+  versions: string[],
+): string {
+  if (names.length === 0) return '';
+  const entries = names.map((name, i) =>
+    formatRpmEntry(name, flags[i] || 0, versions[i] || '')
+  ).join('\n');
+  return `    <rpm:${tag}>\n${entries}\n    </rpm:${tag}>`;
+}
+
 /**
  * Generate XML for a single package
  */
@@ -109,15 +181,10 @@ function generatePackageXml(pkg: RpmPackageEntry): string {
   const ver = headerData.version;
   const rel = headerData.release;
 
-  // Format requires as XML
-  const requiresXml = headerData.requires.length > 0
-    ? `    <rpm:requires>\n${headerData.requires.map(r => `      <rpm:entry name="${escapeXml(r)}"/>`).join('\n')}\n    </rpm:requires>`
-    : '';
-
-  // Format provides as XML
-  const providesXml = headerData.provides.length > 0
-    ? `    <rpm:provides>\n${headerData.provides.map(p => `      <rpm:entry name="${escapeXml(p)}"/>`).join('\n')}\n    </rpm:provides>`
-    : '';
+  const requiresXml = formatDepSection('requires', headerData.requires, headerData.requireFlags, headerData.requireVersions);
+  const providesXml = formatDepSection('provides', headerData.provides, headerData.provideFlags, headerData.provideVersions);
+  const conflictsXml = formatDepSection('conflicts', headerData.conflicts, headerData.conflictFlags, headerData.conflictVersions);
+  const obsoletesXml = formatDepSection('obsoletes', headerData.obsoletes, headerData.obsoleteFlags, headerData.obsoleteVersions);
 
   return `  <package type="rpm">
     <name>${escapeXml(headerData.name)}</name>
@@ -138,6 +205,8 @@ function generatePackageXml(pkg: RpmPackageEntry): string {
       <rpm:sourcerpm>${escapeXml(headerData.sourceRpm)}</rpm:sourcerpm>
 ${requiresXml}
 ${providesXml}
+${conflictsXml}
+${obsoletesXml}
     </format>
   </package>`;
 }

@@ -321,7 +321,17 @@ describe('parseRpmBuffer', () => {
     expect(result.license).toBe('');
     expect(result.url).toBe('');
     expect(result.requires).toEqual([]);
+    expect(result.requireVersions).toEqual([]);
+    expect(result.requireFlags).toEqual([]);
     expect(result.provides).toEqual([]);
+    expect(result.provideVersions).toEqual([]);
+    expect(result.provideFlags).toEqual([]);
+    expect(result.conflicts).toEqual([]);
+    expect(result.conflictVersions).toEqual([]);
+    expect(result.conflictFlags).toEqual([]);
+    expect(result.obsoletes).toEqual([]);
+    expect(result.obsoleteVersions).toEqual([]);
+    expect(result.obsoleteFlags).toEqual([]);
     expect(result.files).toEqual([]);
     expect(result.changelog).toEqual([]);
   });
@@ -366,6 +376,114 @@ describe('parseRpmBuffer', () => {
     view.set(badMainHeader, offset);
 
     expect(() => parseRpmBuffer(buffer)).toThrow(/Invalid RPM header magic/);
+  });
+});
+
+// ============================================================================
+// Dependency Version/Flags Extraction Tests (via parseRpmBuffer)
+// ============================================================================
+
+describe('parseRpmBuffer dependency version and flags extraction', () => {
+  const RPMTAG_REQUIRENAME = 1049;
+  const RPMTAG_REQUIREVERSION = 1050;
+  const RPMTAG_REQUIREFLAGS = 1048;
+  const RPMTAG_PROVIDENAME = 1047;
+  const RPMTAG_PROVIDEVERSION = 1113;
+  const RPMTAG_PROVIDEFLAGS = 1112;
+
+  it('extracts require names, versions, and flags together', () => {
+    const lead = createRpmLead();
+    const sigHeader = createRpmHeader([]);
+    const mainHeader = createRpmHeader([
+      { tag: 1000, type: 6, value: 'deps-pkg' },
+      { tag: 1001, type: 6, value: '1.0.0' },
+      { tag: 1002, type: 6, value: '1' },
+      { tag: RPMTAG_REQUIRENAME, type: 8, value: ['rpmlib(CompressedFileNames)', 'libc.so.6'] },
+      { tag: RPMTAG_REQUIREVERSION, type: 8, value: ['3.0.4-1', ''] },
+      { tag: RPMTAG_REQUIREFLAGS, type: 4, value: [0x0A, 0] }, // LE, none
+    ]);
+
+    const sigPadding = (8 - (sigHeader.length % 8)) % 8;
+    const totalSize = lead.length + sigHeader.length + sigPadding + mainHeader.length;
+
+    const buffer = new ArrayBuffer(totalSize);
+    const view = new Uint8Array(buffer);
+    let offset = 0;
+
+    view.set(lead, offset);
+    offset += lead.length;
+    view.set(sigHeader, offset);
+    offset += sigHeader.length + sigPadding;
+    view.set(mainHeader, offset);
+
+    const result = parseRpmBuffer(buffer);
+
+    expect(result.requires).toEqual(['rpmlib(CompressedFileNames)', 'libc.so.6']);
+    expect(result.requireVersions).toEqual(['3.0.4-1', '']);
+    expect(result.requireFlags).toEqual([0x0A, 0]);
+  });
+
+  it('extracts provide names, versions, and flags together', () => {
+    const lead = createRpmLead();
+    const sigHeader = createRpmHeader([]);
+    const mainHeader = createRpmHeader([
+      { tag: 1000, type: 6, value: 'provides-pkg' },
+      { tag: 1001, type: 6, value: '2.0.0' },
+      { tag: 1002, type: 6, value: '1' },
+      { tag: RPMTAG_PROVIDENAME, type: 8, value: ['my-app', 'my-app(x86-64)'] },
+      { tag: RPMTAG_PROVIDEVERSION, type: 8, value: ['2.0.0-1', '2.0.0-1'] },
+      { tag: RPMTAG_PROVIDEFLAGS, type: 4, value: [0x08, 0x08] }, // EQ
+    ]);
+
+    const sigPadding = (8 - (sigHeader.length % 8)) % 8;
+    const totalSize = lead.length + sigHeader.length + sigPadding + mainHeader.length;
+
+    const buffer = new ArrayBuffer(totalSize);
+    const view = new Uint8Array(buffer);
+    let offset = 0;
+
+    view.set(lead, offset);
+    offset += lead.length;
+    view.set(sigHeader, offset);
+    offset += sigHeader.length + sigPadding;
+    view.set(mainHeader, offset);
+
+    const result = parseRpmBuffer(buffer);
+
+    expect(result.provides).toEqual(['my-app', 'my-app(x86-64)']);
+    expect(result.provideVersions).toEqual(['2.0.0-1', '2.0.0-1']);
+    expect(result.provideFlags).toEqual([0x08, 0x08]);
+  });
+
+  it('handles single-element require arrays (count=1 normalization)', () => {
+    const lead = createRpmLead();
+    const sigHeader = createRpmHeader([]);
+    const mainHeader = createRpmHeader([
+      { tag: 1000, type: 6, value: 'single-dep-pkg' },
+      { tag: 1001, type: 6, value: '1.0.0' },
+      { tag: 1002, type: 6, value: '1' },
+      { tag: RPMTAG_REQUIRENAME, type: 8, value: ['libc.so.6'] },
+      { tag: RPMTAG_REQUIREVERSION, type: 8, value: [''] },
+      { tag: RPMTAG_REQUIREFLAGS, type: 4, value: 0 }, // single INT32, not array
+    ]);
+
+    const sigPadding = (8 - (sigHeader.length % 8)) % 8;
+    const totalSize = lead.length + sigHeader.length + sigPadding + mainHeader.length;
+
+    const buffer = new ArrayBuffer(totalSize);
+    const view = new Uint8Array(buffer);
+    let offset = 0;
+
+    view.set(lead, offset);
+    offset += lead.length;
+    view.set(sigHeader, offset);
+    offset += sigHeader.length + sigPadding;
+    view.set(mainHeader, offset);
+
+    const result = parseRpmBuffer(buffer);
+
+    expect(result.requires).toEqual(['libc.so.6']);
+    expect(result.requireFlags).toEqual([0]);
   });
 });
 

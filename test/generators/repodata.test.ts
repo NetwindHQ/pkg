@@ -32,9 +32,17 @@ function createRpmHeaderData(overrides: Partial<RpmHeaderData> = {}): RpmHeaderD
     buildTime: 1700000000,
     installedSize: 1024000,
     requires: [],
+    requireVersions: [],
+    requireFlags: [],
     provides: [],
+    provideVersions: [],
+    provideFlags: [],
     conflicts: [],
+    conflictVersions: [],
+    conflictFlags: [],
     obsoletes: [],
+    obsoleteVersions: [],
+    obsoleteFlags: [],
     files: [],
     changelog: [],
     ...overrides,
@@ -241,10 +249,12 @@ describe('generatePrimaryXml', () => {
     expect(output).toContain('<rpm:vendor>My Company</rpm:vendor>');
   });
 
-  it('includes requires entries when present', () => {
+  it('includes requires entries without version when flags are zero', () => {
     const packages = [createRpmPackageEntry({
       headerData: createRpmHeaderData({
         requires: ['libc.so.6', 'libssl.so.3'],
+        requireVersions: ['', ''],
+        requireFlags: [0, 0],
       }),
     })];
     const output = generatePrimaryXml(packages);
@@ -255,18 +265,75 @@ describe('generatePrimaryXml', () => {
     expect(output).toContain('</rpm:requires>');
   });
 
-  it('includes provides entries when present', () => {
+  it('includes requires entries with version constraints', () => {
+    const packages = [createRpmPackageEntry({
+      headerData: createRpmHeaderData({
+        requires: ['rpmlib(CompressedFileNames)', 'rpmlib(FileDigests)', 'openssl'],
+        requireVersions: ['3.0.4-1', '4.6.0-1', '1.1.0'],
+        requireFlags: [0x0A, 0x0A, 0x0C], // LE, LE, GE
+      }),
+    })];
+    const output = generatePrimaryXml(packages);
+
+    expect(output).toContain('<rpm:requires>');
+    expect(output).toContain('<rpm:entry name="rpmlib(CompressedFileNames)" flags="LE" epoch="0" ver="3.0.4-1"/>');
+    expect(output).toContain('<rpm:entry name="rpmlib(FileDigests)" flags="LE" epoch="0" ver="4.6.0-1"/>');
+    expect(output).toContain('<rpm:entry name="openssl" flags="GE" epoch="0" ver="1.1.0"/>');
+  });
+
+  it('includes pre attribute for pre-requirement entries', () => {
+    const packages = [createRpmPackageEntry({
+      headerData: createRpmHeaderData({
+        requires: ['setup'],
+        requireVersions: ['2.0'],
+        requireFlags: [0x0C | 0x40], // GE | PREREQ
+      }),
+    })];
+    const output = generatePrimaryXml(packages);
+
+    expect(output).toContain('<rpm:entry name="setup" flags="GE" epoch="0" ver="2.0" pre="1"/>');
+  });
+
+  it('handles epoch in version string', () => {
+    const packages = [createRpmPackageEntry({
+      headerData: createRpmHeaderData({
+        requires: ['pkg-with-epoch'],
+        requireVersions: ['2:3.0-1'],
+        requireFlags: [0x08], // EQ
+      }),
+    })];
+    const output = generatePrimaryXml(packages);
+
+    expect(output).toContain('<rpm:entry name="pkg-with-epoch" flags="EQ" epoch="2" ver="3.0-1"/>');
+  });
+
+  it('includes provides entries with version constraints', () => {
     const packages = [createRpmPackageEntry({
       headerData: createRpmHeaderData({
         provides: ['my-app', 'my-app(x86-64)'],
+        provideVersions: ['1.0.0-1', '1.0.0-1'],
+        provideFlags: [0x08, 0x08], // EQ
       }),
     })];
     const output = generatePrimaryXml(packages);
 
     expect(output).toContain('<rpm:provides>');
-    expect(output).toContain('<rpm:entry name="my-app"/>');
-    expect(output).toContain('<rpm:entry name="my-app(x86-64)"/>');
+    expect(output).toContain('<rpm:entry name="my-app" flags="EQ" epoch="0" ver="1.0.0-1"/>');
+    expect(output).toContain('<rpm:entry name="my-app(x86-64)" flags="EQ" epoch="0" ver="1.0.0-1"/>');
     expect(output).toContain('</rpm:provides>');
+  });
+
+  it('includes provides entries without version when flags are zero', () => {
+    const packages = [createRpmPackageEntry({
+      headerData: createRpmHeaderData({
+        provides: ['my-app'],
+        provideVersions: [''],
+        provideFlags: [0],
+      }),
+    })];
+    const output = generatePrimaryXml(packages);
+
+    expect(output).toContain('<rpm:entry name="my-app"/>');
   });
 
   it('omits requires section when empty', () => {
@@ -276,6 +343,25 @@ describe('generatePrimaryXml', () => {
     const output = generatePrimaryXml(packages);
 
     expect(output).not.toContain('<rpm:requires>');
+  });
+
+  it('includes conflicts and obsoletes sections when present', () => {
+    const packages = [createRpmPackageEntry({
+      headerData: createRpmHeaderData({
+        conflicts: ['old-pkg'],
+        conflictVersions: ['1.0'],
+        conflictFlags: [0x02], // LT
+        obsoletes: ['deprecated-pkg'],
+        obsoleteVersions: ['2.0'],
+        obsoleteFlags: [0x0A], // LE
+      }),
+    })];
+    const output = generatePrimaryXml(packages);
+
+    expect(output).toContain('<rpm:conflicts>');
+    expect(output).toContain('<rpm:entry name="old-pkg" flags="LT" epoch="0" ver="1.0"/>');
+    expect(output).toContain('<rpm:obsoletes>');
+    expect(output).toContain('<rpm:entry name="deprecated-pkg" flags="LE" epoch="0" ver="2.0"/>');
   });
 
   it('escapes XML special characters', () => {
