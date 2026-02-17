@@ -303,7 +303,7 @@ async function handleReadme(request: Request, url: URL, env: Env): Promise<Respo
   if (gpgKey) {
     try {
       const fingerprint = await getKeyFingerprint(gpgKey);
-      fingerprintComment = `# This instance's fingerprint: ${fingerprint}`;
+      fingerprintComment = `This instance's fingerprint: ${fingerprint}`;
       fingerprintFooter = ` · Fingerprint: ${fingerprint}`;
     } catch {
       // Ignore errors - fingerprint is optional

@@ -121,10 +121,11 @@ async function optimizeCSS(css: string, html: string): Promise<string> {
 // Replace reprox.dev URLs with {{BASE_URL}} placeholder
 let processedMarkdown = readmeContent.replace(/https:\/\/reprox\.dev/g, '{{BASE_URL}}');
 
-// Replace fingerprint verification comment with placeholder
+// Replace fingerprint verification comment text with placeholder, keeping the
+// leading "# " so hljs wraps it in <span class="hljs-comment"> at build time
 processedMarkdown = processedMarkdown.replace(
   /# Verify the instance's fingerprint by browsing to it in your web browser/g,
-  '{{FINGERPRINT_COMMENT}}'
+  '# {{FINGERPRINT_COMMENT}}'
 );
 
 // Configure marked with plugins and syntax highlighting
