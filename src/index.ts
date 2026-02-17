@@ -26,6 +26,23 @@ import { signCleartext, signDetached, signDetachedBinary, extractPublicKey, getK
 import { gzipCompress, sha256 } from './utils/crypto';
 import { README_HTML, README_MARKDOWN } from './generated/readme-html';
 
+const apiHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Content-Type': 'application/json',
+  'Cache-Control': 'public, max-age=300',
+} as const;
+
+function githubApiHeaders(token?: string): HeadersInit {
+  const h: HeadersInit = {
+    Accept: 'application/vnd.github.v3+json',
+    'User-Agent': 'Reprox/1.0',
+  };
+  if (token) h['Authorization'] = `token ${token}`;
+  return h;
+}
+
+const validNamePattern = /^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$/;
+
 /**
  * Reprox - Serverless APT/RPM Repository Gateway
  *
@@ -80,7 +97,6 @@ export default {
       }
 
       // Validate owner/repo format (GitHub naming rules)
-      const validNamePattern = /^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$/;
       if (!validNamePattern.test(route.owner) || route.owner.length > 39) {
         return new Response('Invalid owner name', { status: 400 });
       }
@@ -377,15 +393,9 @@ function handleFavicon(): Response {
  * with authenticated token for higher rate limits and caches results
  */
 async function handleSearchApi(url: URL, env: Env): Promise<Response> {
-  const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Content-Type': 'application/json',
-    'Cache-Control': 'public, max-age=300',
-  };
-
   const query = url.searchParams.get('q')?.trim();
-  if (!query || query.length < 2) {
-    return new Response(JSON.stringify({ items: [] }), { headers: corsHeaders });
+  if (!query || query.length < 2 || query.length > 256) {
+    return new Response(JSON.stringify({ items: [] }), { headers: apiHeaders });
   }
 
   // Check cache first
@@ -395,23 +405,15 @@ async function handleSearchApi(url: URL, env: Env): Promise<Response> {
   if (cached) return cached;
 
   // Proxy to GitHub search API with auth
-  const headers: HeadersInit = {
-    Accept: 'application/vnd.github.v3+json',
-    'User-Agent': 'Reprox/1.0',
-  };
-  if (env.GITHUB_TOKEN) {
-    headers['Authorization'] = `token ${env.GITHUB_TOKEN}`;
-  }
-
   const ghResponse = await fetch(
     `https://api.github.com/search/repositories?q=${encodeURIComponent(query)}+in:name&per_page=8&sort=stars`,
-    { headers }
+    { headers: githubApiHeaders(env.GITHUB_TOKEN) }
   );
 
   if (!ghResponse.ok) {
     return new Response(JSON.stringify({ error: 'Search failed' }), {
       status: ghResponse.status,
-      headers: corsHeaders,
+      headers: apiHeaders,
     });
   }
 
@@ -422,13 +424,8 @@ async function handleSearchApi(url: URL, env: Env): Promise<Response> {
     stargazers_count: r.stargazers_count,
   }));
 
-  const response = new Response(JSON.stringify({ items }), { headers: corsHeaders });
-
-  // Cache for 5 minutes
-  const cacheResponse = new Response(JSON.stringify({ items }), {
-    headers: { ...corsHeaders, 'Cache-Control': 'public, max-age=300' },
-  });
-  await cache.put(cacheKey, cacheResponse);
+  const response = new Response(JSON.stringify({ items }), { headers: apiHeaders });
+  await cache.put(cacheKey, response.clone());
 
   return response;
 }
@@ -438,16 +435,15 @@ async function handleSearchApi(url: URL, env: Env): Promise<Response> {
  * and extracts the package name from .deb/.rpm filenames
  */
 async function handlePackageApi(url: URL, env: Env): Promise<Response> {
-  const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Content-Type': 'application/json',
-    'Cache-Control': 'public, max-age=300',
-  };
-
   const owner = url.searchParams.get('owner')?.trim();
   const repo = url.searchParams.get('repo')?.trim();
   if (!owner || !repo) {
-    return new Response(JSON.stringify({ package: '', hasPackages: false }), { headers: corsHeaders });
+    return new Response(JSON.stringify({ package: '', hasPackages: false }), { headers: apiHeaders });
+  }
+
+  if (!validNamePattern.test(owner) || owner.length > 39 ||
+      !validNamePattern.test(repo) || repo.length > 100) {
+    return new Response(JSON.stringify({ package: '', hasPackages: false }), { headers: apiHeaders });
   }
 
   // Check cache first
@@ -457,23 +453,15 @@ async function handlePackageApi(url: URL, env: Env): Promise<Response> {
   if (cached) return cached;
 
   // Fetch latest release with auth
-  const headers: HeadersInit = {
-    Accept: 'application/vnd.github.v3+json',
-    'User-Agent': 'Reprox/1.0',
-  };
-  if (env.GITHUB_TOKEN) {
-    headers['Authorization'] = `token ${env.GITHUB_TOKEN}`;
-  }
-
   const ghResponse = await fetch(
     `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/releases/latest`,
-    { headers }
+    { headers: githubApiHeaders(env.GITHUB_TOKEN) }
   );
 
   if (!ghResponse.ok) {
     return new Response(
       JSON.stringify({ package: repo, hasPackages: false }),
-      { headers: corsHeaders }
+      { headers: apiHeaders }
     );
   }
 
@@ -487,15 +475,14 @@ async function handlePackageApi(url: URL, env: Env): Promise<Response> {
     const name = asset.name;
     if (name.endsWith('.deb')) {
       hasPackages = true;
-      const match = name.match(/^([a-z0-9][a-z0-9.+\-]+?)_\d/);
+      const match = name.match(/^([a-z0-9][a-z0-9.+\-]*?)_\d/);
       if (match) {
         packageName = match[1];
         break;
       }
-    }
-    if (name.endsWith('.rpm')) {
+    } else if (name.endsWith('.rpm')) {
       hasPackages = true;
-      const match = name.match(/^([a-zA-Z0-9][a-zA-Z0-9._+\-]+?)-\d/);
+      const match = name.match(/^([a-zA-Z0-9][a-zA-Z0-9._+\-]*?)-\d/);
       if (match) {
         packageName = match[1];
         break;
@@ -504,13 +491,8 @@ async function handlePackageApi(url: URL, env: Env): Promise<Response> {
   }
 
   const body = JSON.stringify({ package: packageName, hasPackages });
-  const response = new Response(body, { headers: corsHeaders });
-
-  // Cache for 5 minutes
-  const cacheResponse = new Response(body, {
-    headers: { ...corsHeaders, 'Cache-Control': 'public, max-age=300' },
-  });
-  await cache.put(cacheKey, cacheResponse);
+  const response = new Response(body, { headers: apiHeaders });
+  await cache.put(cacheKey, response.clone());
 
   return response;
 }

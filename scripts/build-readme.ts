@@ -191,6 +191,7 @@ const clientScript = `<script>
   var timer=null;
   var selIdx=-1;
   var items=[];
+  var pickGen=0;
 
   input.addEventListener('input',function(){
     clearTimeout(timer);
@@ -201,8 +202,8 @@ const clientScript = `<script>
   });
 
   input.addEventListener('keydown',function(e){
-    if(e.key==='ArrowDown'){e.preventDefault();selIdx=Math.min(selIdx+1,items.length-1);highlight();}
-    else if(e.key==='ArrowUp'){e.preventDefault();selIdx=Math.max(selIdx-1,0);highlight();}
+    if(e.key==='ArrowDown'&&items.length){e.preventDefault();selIdx=Math.min(selIdx+1,items.length-1);highlight();}
+    else if(e.key==='ArrowUp'&&items.length){e.preventDefault();selIdx=Math.max(selIdx-1,-1);highlight();}
     else if(e.key==='Enter'&&selIdx>=0){e.preventDefault();pick(items[selIdx]);}
     else if(e.key==='Escape'){hideResults();}
   });
@@ -253,6 +254,7 @@ const clientScript = `<script>
 
   function pick(repo){
     hideResults();
+    var gen=++pickGen;
     var parts=repo.full_name.split('/');
     var owner=parts[0],rname=parts[1],pkg=rname;
     replacePlaceholders(owner,rname,pkg);
@@ -263,7 +265,7 @@ const clientScript = `<script>
     fetch('/_/package?owner='+encodeURIComponent(owner)+'&repo='+encodeURIComponent(rname))
       .then(function(r){return r.ok?r.json():null;})
       .then(function(data){
-        if(!data)return;
+        if(!data||gen!==pickGen)return;
         if(data.package&&data.package!==rname){
           pkg=data.package;
           replacePlaceholders(owner,rname,pkg);
@@ -280,9 +282,9 @@ const clientScript = `<script>
     var pkgNote=pkg!==rname?' (package: <code>'+esc(pkg)+'</code>)':'';
     banner.innerHTML='Using <strong>'+esc(owner+'/'+rname)+'</strong>'+pkgNote+
       ' \\u2014 all commands below are ready to copy.'+
-      '<a class="reprox-search-clear" id="reprox-clear">Reset</a>';
+      '<a href="#" class="reprox-search-clear" id="reprox-clear">Reset</a>';
     banner.classList.add('visible');
-    document.getElementById('reprox-clear').addEventListener('click',reset);
+    document.getElementById('reprox-clear').addEventListener('click',function(e){e.preventDefault();reset();});
   }
 
   function replacePlaceholders(owner,repo,pkg){
@@ -332,9 +334,8 @@ const clientScript = `<script>
     hidden=[];
   }
 
-  function reset(silent){
+  function reset(){
     restore();
-    if(silent===true)return;
     input.value='';
     banner.classList.remove('visible');
     banner.innerHTML='';
@@ -455,6 +456,8 @@ const customCss = `
   .reprox-search-clear {
     margin-left: 8px;
     cursor: pointer;
+    color: var(--fgColor-accent, #0969da);
+    text-decoration: underline;
   }
   @media (prefers-color-scheme: dark) {
     .reprox-search-input:focus {
@@ -465,8 +468,9 @@ const customCss = `
 
 async function main() {
   // Build a temporary HTML structure for CSS purging (includes footer and search box for their styles)
-  const searchBoxSkeleton = `<div class="reprox-search"><label class="reprox-search-label">x</label><div class="reprox-search-wrap"><input class="reprox-search-input"><div class="reprox-search-results active"><div class="reprox-search-item selected"><div class="reprox-search-item-name"><strong>x</strong></div><small class="reprox-search-item-desc">x</small></div></div></div><small class="reprox-search-status">x</small><div class="reprox-search-active visible"><a class="reprox-search-clear">x</a></div></div>`;
-  const tempHtml = `<body class="markdown-body"><main>${renderedContent}${searchBoxSkeleton}</main><footer class="site-footer"><a href="#">link</a></footer></body>`;
+  // finalContent already contains searchBoxHtml with all base classes; dynamicStateHint adds JS-toggled state classes so PurgeCSS retains them
+  const dynamicStateHint = '<div class="reprox-search-results active"><div class="reprox-search-item selected"></div></div><div class="reprox-search-active visible"><a class="reprox-search-clear"></a></div>';
+  const tempHtml = `<body class="markdown-body"><main>${finalContent}${dynamicStateHint}</main><footer class="site-footer"><a href="#">link</a></footer></body>`;
 
   // Optimize all CSS in parallel
   const [optimizedGithubCss, optimizedLightCss, optimizedDarkCss, optimizedCustomCss] =
