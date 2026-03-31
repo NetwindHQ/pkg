@@ -522,7 +522,7 @@ name=${route.repo} from GitHub via ${url.host}
 baseurl=${baseUrl}
 enabled=1
 gpgcheck=1
-repo_gpgcheck=1
+repo_gpgcheck=0
 gpgkey=${baseUrl}/public.key
 `;
   return new Response(content, {
