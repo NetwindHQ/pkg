@@ -71,9 +71,11 @@ export default {
       const url = new URL(request.url);
       const route = parseRoute(url.pathname);
 
-      // Handle root path - serve static README with dynamic replacements
+      // Handle root path
       if (url.pathname === '/') {
-        return handleReadme(request, url, env);
+        return new Response('Netwind package registry. See https://github.com/NetwindHQ for available packages.\n', {
+          headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+        });
       }
 
       // Handle favicon request
@@ -81,14 +83,9 @@ export default {
         return handleFavicon();
       }
 
-      // Handle search API - proxies GitHub search with auth token and caching
-      if (url.pathname === '/_/search') {
-        return handleSearchApi(url, env);
-      }
-
-      // Handle package name extraction from latest release
-      if (url.pathname === '/_/package') {
-        return handlePackageApi(url, env);
+      // Search and package APIs disabled on private instances
+      if (url.pathname === '/_/search' || url.pathname === '/_/package') {
+        return new Response('Not available on this instance', { status: 404 });
       }
 
       // Validate route has owner/repo
@@ -102,6 +99,14 @@ export default {
       }
       if (!validNamePattern.test(route.repo) || route.repo.length > 100) {
         return new Response('Invalid repository name', { status: 400 });
+      }
+
+      // Restrict to allowed owners if configured (comma-separated, case-insensitive)
+      if (env.ALLOWED_OWNERS) {
+        const allowed = env.ALLOWED_OWNERS.split(',').map(o => o.trim().toLowerCase());
+        if (!allowed.includes(route.owner.toLowerCase())) {
+          return new Response('Repository owner not allowed on this instance', { status: 403 });
+        }
       }
 
       // Initialize services

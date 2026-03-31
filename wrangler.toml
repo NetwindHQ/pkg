@@ -9,6 +9,8 @@ compatibility_date = "2026-01-20"
 [vars]
 # Default cache TTL in seconds (24 hours)
 CACHE_TTL = "86400"
+# Restrict to NetwindHQ repos only (comma-separated, case-insensitive)
+ALLOWED_OWNERS = "NetwindHQ"
 
 [placement]
 mode = "smart"
