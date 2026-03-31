@@ -123,6 +123,9 @@ export default {
         case 'public-key':
           return handlePublicKey(env);
 
+        case 'rpm-repo-file':
+          return handleRpmRepoFile(route, url);
+
         case 'inrelease':
           return handleInRelease(route, github, cache, env, ctx);
 
@@ -211,6 +214,12 @@ export function parseRoute(pathname: string): RouteInfo {
   // /{owner}/{repo}(/prerelease)?/public.key
   if (p(2) === 'public.key') {
     route.type = 'public-key';
+    return route;
+  }
+
+  // /{owner}/{repo}(/prerelease)?/outrunner.repo
+  if (p(2)?.endsWith('.repo')) {
+    route.type = 'rpm-repo-file';
     return route;
   }
 
@@ -505,6 +514,25 @@ async function handlePackageApi(url: URL, env: Env): Promise<Response> {
 /**
  * Handle public key request - serves GPG public key for APT verification
  */
+function handleRpmRepoFile(route: RouteInfo, url: URL): Response {
+  const baseUrl = `${url.protocol}//${url.host}/${route.owner}/${route.repo}`;
+  const repoId = route.repo.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const content = `[${repoId}]
+name=${route.repo} from GitHub via ${url.host}
+baseurl=${baseUrl}
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=${baseUrl}/public.key
+`;
+  return new Response(content, {
+    headers: {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Cache-Control': 'public, max-age=86400',
+    },
+  });
+}
+
 async function handlePublicKey(env: Env): Promise<Response> {
   if (env.GPG_PUBLIC_KEY) {
     return new Response(env.GPG_PUBLIC_KEY, {

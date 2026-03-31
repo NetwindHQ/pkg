@@ -27,7 +27,7 @@ export interface RouteInfo {
     | 'packages' | 'packages-gz' | 'release' | 'release-gpg' | 'inrelease'
     | 'by-hash'
     | 'repomd' | 'repomd-asc' | 'primary' | 'primary-gz' | 'filelists' | 'filelists-gz' | 'other' | 'other-gz'
-    | 'binary' | 'rpm-binary' | 'public-key' | 'unknown';
+    | 'binary' | 'rpm-binary' | 'public-key' | 'rpm-repo-file' | 'unknown';
 }
 
 /**
