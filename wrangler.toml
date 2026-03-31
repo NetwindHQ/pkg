@@ -12,6 +12,10 @@ CACHE_TTL = "86400"
 # Restrict to NetwindHQ repos only (comma-separated, case-insensitive)
 ALLOWED_OWNERS = "NetwindHQ"
 
+[limits]
+cpu_ms = 1000
+subrequests = 1000
+
 [placement]
 mode = "smart"
 
